@@ -96,3 +96,14 @@ export function money(value?: number | null): string {
   if (value === undefined || value === null) return "—";
   return value < 0.01 && value > 0 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
 }
+
+const PLATFORM_NAMES: Record<string, string> = {
+  youtube: "YouTube", instagram: "Instagram", google_drive: "Google Drive", gdrive: "Google Drive",
+  direct: "Direct link", upload: "Upload", live_ingest: "Live stream",
+};
+
+/** Human spelling of a platform key ("youtube" → "YouTube"). */
+export function platformName(key?: string | null): string {
+  if (!key) return "";
+  return PLATFORM_NAMES[key] ?? key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}

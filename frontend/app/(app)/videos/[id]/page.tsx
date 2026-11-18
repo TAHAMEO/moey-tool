@@ -9,7 +9,7 @@ import { ACCESS_LABELS, AccessBadge, StatusBadge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, Modal, Skeleton } from "@/components/ui";
 import { ClipCard } from "@/components/videos/ClipCard";
-import { api, formatDate } from "@/lib/api";
+import { api, formatDate, platformName } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { AllSettings, JobDetail, ProjectDetail } from "@/lib/types";
@@ -48,7 +48,7 @@ export default function ProjectPage() {
             <AccessBadge state={access?.state ?? project.source?.access_status} />
             {project.source?.url && (
               <a href={project.source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-text">
-                {project.source.platform} source <ExternalLink className="size-3" />
+                {platformName(project.source.platform)} source <ExternalLink className="size-3" />
               </a>
             )}
             <span>· {formatDate(project.created_at)}</span>

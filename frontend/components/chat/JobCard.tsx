@@ -7,7 +7,7 @@ import { useState } from "react";
 import { AccessBadge, ACCESS_LABELS, PIPELINE_STEPS, StatusBadge, stepIndex } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, ProgressBar } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, platformName } from "@/lib/api";
 import { useResource } from "@/lib/hooks";
 import type { JobDetail, ProjectDetail } from "@/lib/types";
 
@@ -140,8 +140,8 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
               return (
                 <li key={pkg.package_id} className="flex items-center gap-2 text-[13px]">
                   <input type="checkbox" checked={checked} onChange={(e) => setSelected({ ...selected, [pkg.package_id]: e.target.checked })}
-                    className="size-4 accent-[var(--primary)]" aria-label={`Publish clip ${pkg.rank} to ${pkg.platform}`} />
-                  <span className="font-medium capitalize">{pkg.platform}</span>
+                    className="size-4 accent-[var(--primary)]" aria-label={`Publish clip ${pkg.rank} to ${platformName(pkg.platform)}`} />
+                  <span className="font-medium">{platformName(pkg.platform)}</span>
                   <span className="truncate text-muted">#{pkg.rank} {pkg.title}</span>
                   {pkg.review_words > 0 && <span className="shrink-0 text-[11px] text-warning">check captions</span>}
                 </li>
@@ -170,7 +170,7 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
         <div className="mt-2 flex flex-wrap gap-2">
           {project.clips.flatMap((c) => c.packages.flatMap((p) => p.publications.filter((pub) => pub.url).map((pub) => (
             <a key={pub.id} href={pub.url!} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[12px] text-primary hover:underline">
-              {p.platform} #{c.rank} <ExternalLink className="size-3" />
+              {platformName(p.platform)} #{c.rank} <ExternalLink className="size-3" />
             </a>
           ))))}
         </div>

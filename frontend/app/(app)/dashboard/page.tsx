@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Modal, PageHeader, ProgressBar, SectionHeader, Skeleton, Stat } from "@/components/ui";
-import { api, money, timeAgo } from "@/lib/api";
+import { api, money, platformName, timeAgo } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { JobSummary, ProjectSummary } from "@/lib/types";
@@ -185,7 +185,7 @@ export default function DashboardPage() {
                 const account = connections?.accounts.find((a) => a.platform === platform);
                 return (
                   <li key={platform} className="flex items-center justify-between">
-                    <span className="capitalize">{platform.replace("_", " ")}</span>
+                    <span>{platformName(platform)}</span>
                     {account ? <StatusBadge label={account.status === "connected" ? "Connected" : "Reconnect"} /> : <Link href="/settings#connections" className="text-primary">Connect</Link>}
                   </li>
                 );

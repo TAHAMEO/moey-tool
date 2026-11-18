@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageView } from "@/components/chat/MessageView";
 import { useToast } from "@/components/toast";
 import { Button, ProgressBar, Spinner } from "@/components/ui";
-import { api, timeAgo, uploadWithProgress } from "@/lib/api";
+import { api, platformName, timeAgo, uploadWithProgress } from "@/lib/api";
 import type { Conversation, Message } from "@/lib/types";
 
 const SUGGESTIONS = [
@@ -197,7 +197,7 @@ export default function BrainChatPage() {
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {links.map((l) => (
                   <span key={l.url} className="inline-flex items-center gap-1 rounded-full bg-primary-soft px-2.5 py-1 text-[12px] font-medium text-primary">
-                    <Link2 className="size-3" /> {l.platform}
+                    <Link2 className="size-3" /> {platformName(l.platform)}
                   </span>
                 ))}
                 {upload && (

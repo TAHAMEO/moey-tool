@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Badge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Input, PageHeader, SectionHeader, Skeleton, Tabs, Textarea, Toggle } from "@/components/ui";
-import { api, formatDate, timeAgo } from "@/lib/api";
+import { api, formatDate, platformName, timeAgo } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { AnalyticsSummary, Experiment, KnowledgeItem, LearningRecord, MemoryItem, PublicationAnalytics, Strategy } from "@/lib/types";
@@ -95,7 +95,7 @@ function Insights() {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={r.causal_claim ? "success" : "info"}>{r.causal_claim ? "Tested — confirmed" : r.kind === "experiment_result" ? "Test result" : "Pattern (correlation)"}</Badge>
                 <Badge>{confidenceLabel(r.confidence)}</Badge>
-                {r.platform && <Badge>{r.platform}</Badge>}
+                {r.platform && <Badge>{platformName(r.platform)}</Badge>}
                 {r.status === "rejected" && <Badge tone="danger">Dismissed</Badge>}
                 <span className="ml-auto text-[12px] text-faint">{timeAgo(r.created_at)}</span>
               </div>
@@ -131,7 +131,7 @@ function Insights() {
                     <tr key={p.id} className="border-b border-border last:border-0">
                       <td className="max-w-72 px-4 py-2.5">
                         <a href={p.url ?? undefined} target="_blank" rel="noreferrer" className="line-clamp-1 font-medium hover:text-primary">{p.title}</a>
-                        <span className="text-[12px] text-faint">{p.platform} · {p.status}</span>
+                        <span className="text-[12px] text-faint">{platformName(p.platform)} · {p.status}</span>
                       </td>
                       <td className="px-4 py-2.5 tabular-nums">{cell("views")}</td>
                       <td className="px-4 py-2.5 tabular-nums">{cell("likes")}</td>
