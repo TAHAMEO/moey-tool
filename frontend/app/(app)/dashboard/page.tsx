@@ -1,8 +1,8 @@
 "use client";
 
-import { Activity, Clapperboard, DollarSign, Gauge, OctagonPause, Pause, Play, Send, ShieldAlert } from "lucide-react";
+import { Activity, CheckCircle2, Circle, Clapperboard, DollarSign, Gauge, OctagonPause, Pause, Play, Send, ShieldAlert, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Modal, PageHeader, ProgressBar, SectionHeader, Skeleton, Stat } from "@/components/ui";
@@ -14,6 +14,56 @@ import type { JobSummary, ProjectSummary } from "@/lib/types";
 type Usage = { today_usd: number; month_usd: number; budgets: { daily: number; monthly: number }; cache_hits_month: number };
 type Connections = { accounts: { platform: string; status: string }[]; youtube_quota_remaining: number };
 type Diagnostics = Record<string, { ok?: boolean; [k: string]: unknown }>;
+
+/** First-run guidance; disappears when everything is done (or when dismissed on this device). */
+function SetupChecklist({ connections, projects, diagnostics }: {
+  connections: Connections | null; projects: ProjectSummary[] | null; diagnostics: Diagnostics | null;
+}) {
+  const { can } = useAuth();
+  const { data: providers } = useResource<{ connections: unknown[] }>("/providers");
+  const [dismissed, setDismissed] = useState(true);
+  useEffect(() => {
+    try { setDismissed(localStorage.getItem("cf-setup-dismissed") === "1"); } catch { setDismissed(false); }
+  }, []);
+  if (!connections || !projects || !providers || dismissed) return null;
+  const engines = diagnostics?.transcription_engines as unknown as { available: boolean }[] | undefined;
+  const has = (platform: string) => connections.accounts.some((a) => a.platform === platform);
+  const steps = [
+    ...(can("admin") && engines ? [{ done: engines.some((e) => e.available), label: "Install the speech-recognition model",
+      hint: "On the server: docker compose exec worker clipforge download-models --vosk", href: null }] : []),
+    { done: providers.connections.length > 0, label: "Connect an AI service (optional)",
+      hint: "Smarter titles and answers. Everything else already runs locally.", href: "/connections" },
+    { done: has("youtube"), label: "Connect your YouTube channel", hint: "To publish Shorts and read analytics.", href: "/settings#connections" },
+    { done: has("instagram"), label: "Connect Instagram", hint: "A Business or Creator account, to publish Reels.", href: "/settings#connections" },
+    { done: projects.length > 0, label: "Make your first clips", hint: "Paste a link in Brain Chat.", href: "/" },
+  ];
+  if (steps.every((step) => step.done)) return null;
+  const doneCount = steps.filter((step) => step.done).length;
+  return (
+    <Card className="mt-6 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <SectionHeader title="Get set up" description={`${doneCount} of ${steps.length} done`} />
+        <button aria-label="Hide setup steps" className="rounded-lg p-1 text-faint hover:bg-surface-2 hover:text-text"
+          onClick={() => { try { localStorage.setItem("cf-setup-dismissed", "1"); } catch { /* private mode */ } setDismissed(true); }}>
+          <X className="size-4" />
+        </button>
+      </div>
+      <ul className="space-y-2.5">
+        {steps.map((step) => (
+          <li key={step.label} className="flex items-start gap-2.5">
+            {step.done ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" /> : <Circle className="mt-0.5 size-4 shrink-0 text-faint" />}
+            <div className="min-w-0 text-[13px]">
+              {step.href && !step.done
+                ? <Link href={step.href} className="font-medium hover:text-primary">{step.label} →</Link>
+                : <span className={step.done ? "text-muted line-through" : "font-medium"}>{step.label}</span>}
+              {!step.done && <p className="mt-0.5 break-words text-[12px] text-muted">{step.hint}</p>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
 
 export default function DashboardPage() {
   const { can } = useAuth();
@@ -58,6 +108,8 @@ export default function DashboardPage() {
         <Stat label="YouTube quota left" value={connections ? connections.youtube_quota_remaining.toLocaleString() : "—"}
           icon={<Gauge className="size-4" />} hint="units today (resets midnight PT)" />
       </div>
+
+      <SetupChecklist connections={connections} projects={projects} diagnostics={diagnostics} />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">

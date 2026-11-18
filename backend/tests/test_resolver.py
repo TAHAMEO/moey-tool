@@ -7,6 +7,7 @@ shapes. See docs/TEST_RESULTS.md for what remains BLOCKED.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import threading
 import uuid
@@ -123,16 +124,48 @@ def test_instagram_states_and_cdn_guard(platforms):
     assert not_connected.state == rs.LOGIN_REQUIRED
     connect("instagram", platforms.ig_user_id)
     platforms.ig_media = [{"id": "1790001", "media_type": "VIDEO", "media_product_type": "REELS", "shortcode": "Mine12345",
-                           "permalink": "https://www.instagram.com/reel/Mine12345/", "media_url": f"{platforms.base}/video.mp4",
+                           "permalink": "https://www.instagram.com/reel/Mine12345/", "media_url": f"{platforms.base}/cdn/fresh.mp4",
                            "caption": "my reel"}]
     other = resolve(make_source("https://www.instagram.com/reel/Other12345/"))
     assert other.state == rs.PERMISSION_REQUIRED and any("other accounts" in r for r in other.reasons)
     mine_src = make_source("https://www.instagram.com/someuser/reel/Mine12345/")
     mine = resolve(mine_src)
     assert mine.state == rs.FULL_MEDIA_ACCESS and mine.method == "instagram_own_media" and mine.owned
-    with session_scope() as db, pytest.raises(acq.AcquisitionError):
-        # The fake media URL is not an Instagram CDN host: acquisition must refuse it.
+    with session_scope() as db, pytest.raises(acq.AcquisitionError, match="Unexpected media host"):
+        # The file downloads fine, but not from an Instagram CDN host: acquisition must refuse it.
         acq.acquire(db, db.get(Source, mine_src), mine.to_dict())
+
+
+def test_instagram_video_post_and_image_post(platforms):
+    """31.11 #10: feed video posts (/p/...) work like Reels; image posts are reported as unsupported."""
+    connect("instagram", platforms.ig_user_id)
+    platforms.ig_media = [
+        {"id": "1790010", "media_type": "VIDEO", "media_product_type": "FEED", "shortcode": "VidPost123",
+         "permalink": "https://www.instagram.com/p/VidPost123/", "media_url": f"{platforms.base}/cdn/fresh.mp4"},
+        {"id": "1790011", "media_type": "IMAGE", "media_product_type": "FEED", "shortcode": "ImgPost123",
+         "permalink": "https://www.instagram.com/p/ImgPost123/", "media_url": f"{platforms.base}/img.jpg"},
+    ]
+    video = resolve(make_source("https://www.instagram.com/p/VidPost123/"))
+    assert video.state == rs.FULL_MEDIA_ACCESS and video.method == "instagram_own_media"
+    image = resolve(make_source("https://www.instagram.com/p/ImgPost123/"))
+    assert image.state == rs.UNSUPPORTED_SOURCE and "not a video" in image.reasons[0]
+
+
+def test_expired_instagram_media_link_is_renewed(platforms, monkeypatch):
+    """31.11 #16: signed media URLs expire; acquisition renews access instead of failing."""
+    connect("instagram", platforms.ig_user_id)
+    platforms.ig_media = [{"id": "1790002", "media_type": "VIDEO", "media_product_type": "REELS", "shortcode": "Exp12345",
+                           "permalink": "https://www.instagram.com/reel/Exp12345/", "caption": "my reel",
+                           "media_url": f"{platforms.base}/cdn/expired.mp4"}]
+    platforms.fresh_media_url = f"{platforms.base}/cdn/fresh.mp4"
+    monkeypatch.setattr(rs, "INSTAGRAM_CDN", re.compile(r"^127\.0\.0\.1$"))  # the fake CDN host
+    src = make_source("https://www.instagram.com/reel/Exp12345/")
+    access = resolve(src)
+    assert access.state == rs.FULL_MEDIA_ACCESS and access.acquire["media_url"].endswith("/cdn/expired.mp4")
+    with session_scope() as db:
+        result = acq.acquire(db, db.get(Source, src), access.to_dict())
+    assert result["method"] == "instagram_own_media" and result["bytes"] > 0
+    assert any(r["path"].endswith("/1790002") for r in platforms.requests)  # fresh link requested once
 
 
 class _Direct(BaseHTTPRequestHandler):

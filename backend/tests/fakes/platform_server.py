@@ -24,6 +24,7 @@ class FakePlatforms:
         self.captions: dict[str, list[dict]] = {}
         self.caption_text: dict[str, str] = {}
         self.ig_media: list[dict] = []
+        self.fresh_media_url: str | None = None
         self.ig_user_id = "17841400000000001"
         self.uploads: dict[str, dict] = {}
         self.uploaded_videos: dict[str, dict] = {}
@@ -117,6 +118,13 @@ class FakePlatforms:
                         return self._send(200, {"id": obj_id, "status_code": status, "status": status})
                     if obj_id in server.published:
                         return self._send(200, server.published[obj_id])
+                    media = next((m for m in server.ig_media if m["id"] == obj_id), None)
+                    if media is not None:  # the owner's media: a freshly signed URL each time
+                        return self._send(200, {"id": obj_id, "media_url": server.fresh_media_url or media.get("media_url")})
+                if path == "/cdn/expired.mp4":
+                    return self._send(403, {"error": "URL signature expired"})
+                if path == "/cdn/fresh.mp4":
+                    return self._send(200, raw=b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 200, ctype="video/mp4")
                 return self._send(404, {"error": {"message": f"no route {path}"}})
 
             # --------------------------------------------------------------- POST

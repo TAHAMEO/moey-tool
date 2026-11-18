@@ -12,7 +12,7 @@ import { ClipCard } from "@/components/videos/ClipCard";
 import { api, formatDate } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
-import type { ProjectDetail } from "@/lib/types";
+import type { JobDetail, ProjectDetail } from "@/lib/types";
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -102,13 +102,19 @@ export default function ProjectPage() {
         )}
       </div>
 
-      {access && access.checks.length > 0 && (
+      {(access?.checks.length || workflow) && (
         <details className="mt-8 rounded-xl border border-border bg-surface p-4 text-[12px]">
-          <summary className="cursor-pointer font-medium text-muted">Advanced diagnostics: access checks</summary>
-          <ul className="mt-2 space-y-1">
-            {access.checks.map((c, i) => <li key={i}><span className="font-mono text-faint">{c.check}</span> — {c.result}</li>)}
-          </ul>
-          <p className="mt-2 text-faint">Method: {access.method ?? "none"} · capabilities: {Object.entries(access.capabilities).filter(([, v]) => v).map(([k]) => k).join(", ") || "none"}</p>
+          <summary className="cursor-pointer font-medium text-muted">Advanced diagnostics</summary>
+          {access && access.checks.length > 0 && (
+            <>
+              <p className="mt-3 font-medium">Access checks</p>
+              <ul className="mt-1 space-y-1">
+                {access.checks.map((c, i) => <li key={i}><span className="font-mono text-faint">{c.check}</span> — {c.result}</li>)}
+              </ul>
+              <p className="mt-2 text-faint">Method: {access.method ?? "none"} · capabilities: {Object.entries(access.capabilities).filter(([, v]) => v).map(([k]) => k).join(", ") || "none"}</p>
+            </>
+          )}
+          {workflow && <JobTimeline jobId={workflow.id} />}
         </details>
       )}
 
@@ -117,5 +123,25 @@ export default function ProjectPage() {
         <p className="text-sm text-muted">Rendered clips, captions and thumbnails of this project are deleted. Published videos stay on the platforms.</p>
       </Modal>
     </div>
+  );
+}
+
+function JobTimeline({ jobId }: { jobId: string }) {
+  const { data } = useResource<JobDetail>(`/jobs/${jobId}`);
+  if (!data) return null;
+  return (
+    <>
+      <p className="mt-4 font-medium">Job timeline <span className="font-normal text-faint">· {data.status} · attempt {data.attempts} of {data.max_attempts}</span></p>
+      <ol className="mt-1 max-h-72 space-y-0.5 overflow-y-auto font-mono text-[11px]">
+        {data.events.map((e, i) => (
+          <li key={i} className={e.level === "error" ? "text-danger" : e.level === "warning" ? "text-warning" : "text-muted"}>
+            <span className="text-faint">{new Date(e.at).toLocaleTimeString()}</span> {e.stage ? `[${e.stage}] ` : ""}{e.message}
+          </li>
+        ))}
+      </ol>
+      {data.children.length > 0 && (
+        <p className="mt-2 text-faint">Steps: {data.children.map((c) => `${c.type.split(".").pop()} ${c.status}`).join(" · ")}</p>
+      )}
+    </>
   );
 }

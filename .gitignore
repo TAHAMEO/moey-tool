@@ -28,3 +28,4 @@ frontend/playwright-report/
 frontend/next-env.d.ts
 docker-compose.override.yml
 /backups/
+frontend/e2e-shots/

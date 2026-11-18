@@ -1,0 +1,373 @@
+{
+  "generated": "2026-11-18",
+  "status_legend": {
+    "verified": "installed and exercised with real software in this environment (automated tests or recorded end-to-end runs)",
+    "contract-tested": "implemented against the official API and verified with contract tests against local fakes; the real service could not be used here",
+    "blocked": "could not be verified here (missing credentials, unreachable host, or download not permitted)",
+    "not-installed": "evaluated and deliberately not installed",
+    "reference-only": "studied as an architecture reference only; no code used"
+  },
+  "build_environment": {
+    "os": "Ubuntu 24.04.5 LTS x86_64",
+    "cpu": "4 vCPU",
+    "ram_gib": 15,
+    "gpu": null,
+    "python": "3.12.3",
+    "node": "22.23.5",
+    "ffmpeg": "6.1.1 (GPL build: libx264, libass, libsrt)",
+    "postgresql": "16 + pgvector 0.6.0 (host) / 0.8.7 (image)",
+    "docker": "29.10.0, Compose v5.7.1"
+  },
+  "components": [
+    {
+      "catalog_item": 1,
+      "name": "LangGraph",
+      "source": "PyPI",
+      "version": "langgraph 1.2.22, langgraph-checkpoint-postgres 3.2.1",
+      "license": "MIT",
+      "decision": "install & integrate (core)",
+      "install_method": "uv (backend/uv.lock)",
+      "role": "Brain chat graph, durable video/publish workflows with Postgres checkpoints",
+      "verification": {
+        "status": "verified",
+        "evidence": "tests/test_jobs_runtime.py, tests/test_brain_chat.py, tests/test_pipeline_e2e.py"
+      }
+    },
+    {
+      "catalog_item": 2,
+      "name": "Mem0",
+      "source": "PyPI",
+      "version": "mem0ai 2.2.1",
+      "license": "Apache-2.0",
+      "decision": "install & integrate (core)",
+      "install_method": "uv",
+      "role": "Permanent memory on pgvector with local embeddings",
+      "verification": {
+        "status": "verified",
+        "evidence": "memory survives restart (tests/test_brain_chat.py), works without writable HOME (tests/test_memory_env.py), LLM fact extraction with a real local model (Ollama, recorded run)"
+      }
+    },
+    {
+      "catalog_item": 3,
+      "name": "FunClip",
+      "source": "GitHub modelscope/FunClip",
+      "version": "cdcb53f",
+      "license": "MIT",
+      "decision": "evaluated, not installed",
+      "install_method": null,
+      "role": "Chinese-centric ASR alternative",
+      "verification": {
+        "status": "not-installed",
+        "evidence": "dependency conflicts (numpy 1.26 pin) and ModelScope unreachable"
+      }
+    },
+    {
+      "catalog_item": 4,
+      "name": "WhisperX",
+      "source": "PyPI",
+      "version": "whisperx 3.8.6 (torch 2.8.0)",
+      "license": "BSD-2-Clause",
+      "decision": "install in isolated venv (optional engine)",
+      "install_method": "workers/whisperx/requirements.lock (hash-checked)",
+      "role": "Highest-accuracy transcription engine",
+      "verification": {
+        "status": "blocked",
+        "evidence": "lock installs and imports (verified); model weights unavailable (huggingface.co blocked) so transcription was not run; 14 known advisories in pinned torch/transformers"
+      }
+    },
+    {
+      "catalog_item": 5,
+      "name": "PySceneDetect",
+      "source": "PyPI",
+      "version": "scenedetect 0.7.3",
+      "license": "BSD-3-Clause",
+      "decision": "install & integrate (core)",
+      "install_method": "uv",
+      "role": "Scene boundaries",
+      "verification": {
+        "status": "verified",
+        "evidence": "tests/test_pipeline_e2e.py (real test video)"
+      }
+    },
+    {
+      "catalog_item": 6,
+      "name": "FFmpeg",
+      "source": "Ubuntu package",
+      "version": "6.1.1",
+      "license": "GPL-2.0-or-later (this build)",
+      "decision": "use system binary (core)",
+      "install_method": "apt / Docker image",
+      "role": "Decoding, rendering, loudness, live segmenting",
+      "verification": {
+        "status": "verified",
+        "evidence": "real renders 1080x1920 H.264/AAC, QC passed; live SRT ingest tests"
+      }
+    },
+    {
+      "catalog_item": 7,
+      "name": "AI-Youtube-Shorts-Generator",
+      "source": "GitHub Anil-matcha",
+      "version": "1142a74",
+      "license": "MIT",
+      "decision": "evaluated, not installed",
+      "install_method": null,
+      "role": "Clip generator",
+      "verification": {
+        "status": "not-installed",
+        "evidence": "requires paid MuAPI or yt-dlp; redundant"
+      }
+    },
+    {
+      "catalog_item": 8,
+      "name": "AutoClip (local-first)",
+      "source": "GitHub artbyjazi/autoclip",
+      "version": "5d0eac3",
+      "license": "MIT",
+      "decision": "adapt selected modules (vendored)",
+      "install_method": "backend/clipforge/vendor/autoclip",
+      "role": "Reframing, sentence refinement, captions",
+      "verification": {
+        "status": "verified",
+        "evidence": "face-tracked 9:16 renders in end-to-end tests"
+      }
+    },
+    {
+      "catalog_item": 9,
+      "name": "AutoClip (desktop)",
+      "source": "GitHub zhouxiaoka/autoclip",
+      "version": "cd8e6be",
+      "license": "MIT",
+      "decision": "evaluated, not installed",
+      "install_method": null,
+      "role": "Desktop clipping app",
+      "verification": {
+        "status": "not-installed",
+        "evidence": "overlaps item 8; bundles yt-dlp"
+      }
+    },
+    {
+      "catalog_item": 10,
+      "name": "ViralMint",
+      "source": "GitHub openclaw-easy/ViralMint",
+      "version": "20f2bd7",
+      "license": "AGPL-3.0",
+      "decision": "architecture reference only",
+      "install_method": null,
+      "role": "-",
+      "verification": {
+        "status": "reference-only",
+        "evidence": "no code used"
+      }
+    },
+    {
+      "catalog_item": 11,
+      "name": "google-api-python-client",
+      "source": "GitHub googleapis",
+      "version": "354d888",
+      "license": "Apache-2.0",
+      "decision": "evaluated, not installed",
+      "install_method": null,
+      "role": "Google API client",
+      "verification": {
+        "status": "not-installed",
+        "evidence": "maintenance mode; official REST endpoints used directly"
+      }
+    },
+    {
+      "catalog_item": 12,
+      "name": "YouTube Data API v3 / Analytics API v2",
+      "source": "Google REST APIs",
+      "version": "v3 / v2",
+      "license": "Google API Terms",
+      "decision": "integrated (REST)",
+      "install_method": null,
+      "role": "OAuth, resumable upload, captions, thumbnails, playlists, analytics",
+      "verification": {
+        "status": "contract-tested",
+        "evidence": "tests/test_publishing.py, tests/test_resolver.py, tests/test_analytics_learning.py; real API blocked: no OAuth client supplied, youtube.com unreachable"
+      }
+    },
+    {
+      "catalog_item": 13,
+      "name": "Inoue-AI Instagram SDK",
+      "source": "GitHub (pinned git commit)",
+      "version": "5fcda416135c6d24277384b6208b98faf4f70cd8",
+      "license": "MIT",
+      "decision": "install pinned commit & integrate",
+      "install_method": "uv git dependency",
+      "role": "Own-media listing, container polling, insights",
+      "verification": {
+        "status": "contract-tested",
+        "evidence": "contract tests; real API blocked (no Meta app, graph.instagram.com unreachable). PyPI name belongs to another project"
+      }
+    },
+    {
+      "catalog_item": 14,
+      "name": "instagram-publish",
+      "source": "GitHub remc0r",
+      "version": "e0dd56f",
+      "license": "MIT",
+      "decision": "evaluated, not installed",
+      "install_method": null,
+      "role": "Publishing client",
+      "verification": {
+        "status": "not-installed",
+        "evidence": "redundant with item 13 + native code"
+      }
+    },
+    {
+      "catalog_item": 15,
+      "name": "Instagram Platform (Instagram Login)",
+      "source": "Meta Graph API",
+      "version": "v24.0",
+      "license": "Meta Platform Terms",
+      "decision": "integrated",
+      "install_method": null,
+      "role": "OAuth, Reels containers, resumable upload, publish, insights",
+      "verification": {
+        "status": "contract-tested",
+        "evidence": "tests/test_publishing.py, tests/test_resolver.py; real API blocked"
+      }
+    },
+    {
+      "catalog_item": 16,
+      "name": "Postiz",
+      "source": "GitHub gitroomhq/postiz-app",
+      "version": "a638091",
+      "license": "AGPL-3.0",
+      "decision": "architecture reference only",
+      "install_method": null,
+      "role": "-",
+      "verification": {
+        "status": "reference-only",
+        "evidence": "no code used"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "Vosk + vosk-model-en-us-0.22",
+      "source": "PyPI / alphacephei",
+      "version": "0.3.45 / 0.22",
+      "license": "Apache-2.0",
+      "decision": "install (default ASR)",
+      "install_method": "uv; `clipforge download-models --vosk`",
+      "role": "CPU speech recognition",
+      "verification": {
+        "status": "verified",
+        "evidence": "real transcription in end-to-end tests (WER 9.2% on the test talk); per-file SHA-256 manifest"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "faster-whisper",
+      "source": "PyPI",
+      "version": "1.2.1",
+      "license": "MIT",
+      "decision": "install (optional engine)",
+      "install_method": "uv",
+      "role": "Multilingual ASR",
+      "verification": {
+        "status": "blocked",
+        "evidence": "package installed; models on huggingface.co unreachable"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "MediaPipe Tasks",
+      "source": "PyPI + storage.googleapis.com models",
+      "version": "1.2.3",
+      "license": "Apache-2.0",
+      "decision": "install & integrate",
+      "install_method": "uv; `clipforge download-models`",
+      "role": "Faces, sentence embeddings, audio events",
+      "verification": {
+        "status": "verified",
+        "evidence": "models downloaded and SHA-256 verified inside the containers; used in renders and memory"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "Ollama + Llama 3.2 1B, Qwen 2.5 3B",
+      "source": "Docker Hub",
+      "version": "0.40.16",
+      "license": "MIT (models: own licences)",
+      "decision": "optional local AI (compose profile)",
+      "install_method": "docker compose --profile local-ai",
+      "role": "Local language models",
+      "verification": {
+        "status": "verified",
+        "evidence": "two provider connections, routing, failover, memory extraction, knowledge, re-ranking and metadata with real models (recorded run)"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "Cloud AI providers (OpenAI, Gemini, Anthropic)",
+      "source": "REST APIs",
+      "version": "-",
+      "license": "provider terms",
+      "decision": "integrated (adapters)",
+      "install_method": null,
+      "role": "Chat/JSON generation",
+      "verification": {
+        "status": "contract-tested",
+        "evidence": "tests/test_model_hub.py; no API keys supplied"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "Caddy",
+      "source": "Docker Hub",
+      "version": "2",
+      "license": "Apache-2.0",
+      "decision": "deploy (front door)",
+      "install_method": "docker-compose.yml",
+      "role": "HTTPS, routing, client address",
+      "verification": {
+        "status": "verified",
+        "evidence": "compose stack: routing and X-Forwarded-For replacement verified"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "Valkey",
+      "source": "Docker Hub",
+      "version": "8.1",
+      "license": "BSD-3-Clause",
+      "decision": "deploy",
+      "install_method": "docker-compose.yml",
+      "role": "Wake-ups, throttling",
+      "verification": {
+        "status": "verified",
+        "evidence": "compose stack healthy; doctor check"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "PostgreSQL + pgvector",
+      "source": "Docker Hub pgvector/pgvector:pg16",
+      "version": "16 / 0.8.7",
+      "license": "PostgreSQL License",
+      "decision": "deploy (core)",
+      "install_method": "docker-compose.yml",
+      "role": "Data, vectors, jobs, checkpoints",
+      "verification": {
+        "status": "verified",
+        "evidence": "migrations, backup and verified restore"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "yt-dlp and other third-party downloaders",
+      "source": "-",
+      "version": "-",
+      "license": "-",
+      "decision": "deliberately excluded",
+      "install_method": null,
+      "role": "-",
+      "verification": {
+        "status": "not-installed",
+        "evidence": "not an authorised access method"
+      }
+    }
+  ]
+}

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db.base import utcnow
 from ..db.models import MediaAsset, SocialAccount, Source, Transcript
-from ..platforms import drive, google, youtube
+from ..platforms import drive, google, instagram, youtube
 from ..platforms.http import PlatformError
 from ..security import ssrf
 from ..storage import get_storage, sha256_file
@@ -53,6 +53,20 @@ def _store_source_media(db: Session, source: Source, path: Path, *, sha: str, mi
     return asset
 
 
+def _fresh_instagram_url(db: Session, media_id: str) -> str:
+    account = db.execute(select(SocialAccount).where(SocialAccount.platform == "instagram",
+                                                     SocialAccount.status == "connected")).scalars().first()
+    if account is None:
+        raise AcquisitionError("Instagram is no longer connected.", state=r.LOGIN_REQUIRED)
+    try:
+        url = instagram.fresh_media_url(instagram.access_token(db, account), media_id)
+    except PlatformError as exc:
+        raise AcquisitionError(f"Could not renew access to the Instagram media: {exc}", retryable=exc.retryable) from exc
+    if not url:
+        raise AcquisitionError("Instagram no longer provides the media file for this post.", state=r.ACCESS_DENIED)
+    return url
+
+
 def acquire(db: Session, source: Source, access: dict) -> dict:
     """Returns {'media_asset_id'|'transcript_id': ..., 'method': ...}."""
     method = access.get("method")
@@ -80,7 +94,10 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
         except ssrf.FetchError as exc:
             retry = exc.code in ("timeout",) or (exc.status or 0) >= 500
             state = {"access_denied": r.ACCESS_DENIED, "not_found": r.SOURCE_UNAVAILABLE}.get(exc.code)
-            raise AcquisitionError(str(exc), retryable=retry, state=state) from exc
+            message = str(exc)
+            if exc.code == "access_denied":
+                message += " — if it was a temporary (signed) link it may have expired; paste a fresh link."
+            raise AcquisitionError(message, retryable=retry, state=state) from exc
         asset = _store_source_media(db, source, result.path, sha=result.sha256, mime=result.content_type,
                                     origin={"method": method, "url": result.final_url, "redirects": result.redirects})
         return {"media_asset_id": str(asset.id), "method": method, "bytes": result.size}
@@ -111,11 +128,21 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
 
     if method == "instagram_own_media":
         dest = tmp_dir / "instagram.mp4"
-        try:
-            result = ssrf.safe_download(params["media_url"], dest, max_bytes=max_bytes,
-                                        allowed_redirect_hosts=None)
-        except (ssrf.UnsafeURLError, ssrf.FetchError) as exc:
-            raise AcquisitionError(f"Instagram media download failed: {exc}", retryable=True) from exc
+        url = params["media_url"]
+        for attempt in (1, 2):
+            try:
+                result = ssrf.safe_download(url, dest, max_bytes=max_bytes, allowed_redirect_hosts=None)
+                break
+            except ssrf.UnsafeURLError as exc:
+                raise AcquisitionError(f"Instagram media link refused: {exc}", state=r.ACCESS_DENIED) from exc
+            except ssrf.FetchError as exc:
+                # Instagram's media URLs are signed and expire (e.g. when a retry runs hours later):
+                # ask the API once for a fresh link to the same media instead of retrying a dead one.
+                if attempt == 1 and exc.code in ("access_denied", "not_found") and params.get("media_id"):
+                    url = _fresh_instagram_url(db, params["media_id"])
+                    continue
+                retry = exc.code == "timeout" or (exc.status or 0) >= 500
+                raise AcquisitionError(f"Instagram media download failed: {exc}", retryable=retry) from exc
         host = ssrf.validate_url(result.final_url).host
         if not r.INSTAGRAM_CDN.search(host):
             dest.unlink(missing_ok=True)

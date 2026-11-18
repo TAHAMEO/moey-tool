@@ -5,6 +5,7 @@
     clipforge migrate
     clipforge create-owner --email you@example.com      (password read from stdin/prompt)
     clipforge gen-key
+    clipforge rotate-secrets
     clipforge backup
     clipforge download-models
     clipforge doctor
@@ -91,6 +92,19 @@ def cmd_gen_key(_: argparse.Namespace) -> int:
 
     print(generate_master_key())
     return 0
+
+
+def cmd_rotate_secrets(_: argparse.Namespace) -> int:
+    from .db.base import session_scope
+    from .security import crypto
+
+    with session_scope() as db:
+        result = crypto.rotate_all(db)
+    print(f"Re-encrypted {result['rotated']} secret(s) with the current master key; "
+          f"{result['failed']} could not be decrypted; {result['remaining']} still use a previous key.")
+    if result["remaining"] == 0 and result["failed"] == 0:
+        print("You can now remove CLIPFORGE_MASTER_KEY_PREVIOUS.")
+    return 1 if result["failed"] else 0
 
 
 def cmd_backup(_: argparse.Namespace) -> int:
@@ -206,9 +220,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Media, backups and memory files are private to the service account (some container
-    # runtimes start `exec` sessions with umask 000).
-    os.umask(0o077)
+    # Media, backups and memory files are private to the service accounts: owner and the shared
+    # `clipforge` group (the media worker may run as a separate user), nothing for others. Some
+    # container runtimes start `exec` sessions with umask 000.
+    os.umask(0o007)
     parser = argparse.ArgumentParser(prog="clipforge", description="CLIPFORGE AI service and admin commands")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -232,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("gen-key", help="print a new random master encryption key").set_defaults(func=cmd_gen_key)
     sub.add_parser("backup", help="back up the database and memory now").set_defaults(func=cmd_backup)
+    sub.add_parser("rotate-secrets", help="re-encrypt all stored secrets with the current master key").set_defaults(
+        func=cmd_rotate_secrets)
     p = sub.add_parser("download-models", help="download and verify the local AI models")
     p.add_argument("--strict", action="store_true", help="exit non-zero if any model is missing")
     p.add_argument("--vosk", action="store_true", help="also install the English speech model (~1.8 GB download)")

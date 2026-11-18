@@ -1,0 +1,21 @@
+[Unit]
+Description=CLIPFORGE worker (orchestration, publishing, live ingest)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+User=clipforge
+Group=clipforge
+WorkingDirectory=/opt/clipforge/backend
+# Holds CLIPFORGE_MASTER_KEY and platform secrets (chmod 600, owned by root).
+EnvironmentFile=/etc/clipforge/clipforge.env
+ExecStart=/opt/clipforge/backend/.venv/bin/clipforge worker --queues default
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/clipforge
+
+[Install]
+WantedBy=multi-user.target

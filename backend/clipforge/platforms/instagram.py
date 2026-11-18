@@ -244,6 +244,14 @@ def media_info(token: str, media_id: str) -> dict:
     return response.json()
 
 
+def fresh_media_url(token: str, media_id: str) -> str | None:
+    """A new signed CDN URL for the owner's media (the previous one may have expired)."""
+    response = request("instagram", "GET", f"{_base()}/{media_id}", params={"fields": "id,media_url", "access_token": token})
+    if response.status_code != 200:
+        raise meta_error(response)
+    return response.json().get("media_url")
+
+
 def reel_insights(token: str, media_id: str, metrics: list[str] | None = None) -> tuple[dict, dict]:
     """Returns (available metrics, unavailable metric -> reason)."""
     wanted = metrics or REEL_METRICS

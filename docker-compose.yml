@@ -66,12 +66,14 @@ services:
       timeout: 5s
       retries: 30
 
+  # Valkey: BSD-licensed, Redis-protocol compatible (Redis 7.4+ is no longer open source).
+  # Only wake-ups and throttling live here; PostgreSQL is the source of truth, so no persistence.
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:8-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 20

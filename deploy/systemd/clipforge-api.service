@@ -1,0 +1,22 @@
+[Unit]
+Description=CLIPFORGE API
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+User=clipforge
+Group=clipforge
+WorkingDirectory=/opt/clipforge/backend
+# Holds CLIPFORGE_MASTER_KEY and platform secrets (chmod 600, owned by root).
+EnvironmentFile=/etc/clipforge/clipforge.env
+ExecStartPre=/opt/clipforge/backend/.venv/bin/clipforge migrate
+ExecStart=/opt/clipforge/backend/.venv/bin/clipforge api --host 127.0.0.1 --port 8000
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/clipforge
+
+[Install]
+WantedBy=multi-user.target

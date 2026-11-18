@@ -16,7 +16,7 @@ was installed and imported/executed. The final pass/fail status of each acceptan
 | Python | 3.11, 3.12, 3.13 present. **Backend uses 3.12** (MediaPipe/AutoClip reframe code and WhisperX all support it; FunClip docs use 3.12) |
 | Node.js / npm | v22.23.5 / 10.9.9 |
 | Git | 2.43.0 |
-| Docker | 29.10.0 + Compose v5.7.1 (daemon started manually; pulls from Docker Hub and ghcr.io work) |
+| Docker | 29.10.0 + Compose v5.7.1 (daemon started manually). Docker Hub later rate-limited anonymous pulls (HTTP 429), so `mirror.gcr.io` was configured as registry mirror; ghcr.io's blob CDN is blocked |
 | FFmpeg | 6.1.1 (Ubuntu build) with `--enable-gpl --enable-libx264 --enable-libass --enable-libfreetype --enable-libfontconfig --enable-libsrt --enable-libflite` |
 | PostgreSQL | 16.15 + pgvector 0.6.0 (apt `postgresql-16-pgvector`) |
 | Redis | redis-server present (7.x, Ubuntu) |
@@ -41,7 +41,7 @@ channels (see §4).
 | 1 | [LangGraph](https://github.com/langchain-ai/langgraph) | PyPI `langgraph==1.2.22`, `langgraph-checkpoint-postgres==3.2.1` (repo `84ced60`) | MIT | **Install & integrate (core)** | `uv` (pinned, `uv.lock`) | Brain chat graph + durable video/publish workflow graphs with `PostgresSaver` checkpoints, interrupts for child jobs and publish approvals | See TEST_RESULTS |
 | 2 | [Mem0](https://github.com/mem0ai/mem0) | PyPI `mem0ai==2.2.1` (repo `fff8a64`) | Apache-2.0 | **Install & integrate (core)** | `uv` | Memory engine with **pgvector** store in the CLIPFORGE Postgres and a LangChain-adapter embedder backed by the local MediaPipe sentence encoder (no paid API). Telemetry disabled (`MEM0_TELEMETRY=False`) | See TEST_RESULTS |
 | 3 | [FunClip](https://github.com/modelscope/FunClip) | repo `cdcb53f` (v2.2.x) | MIT | **Evaluated — not installed in core** | — | Paraformer ASR is Chinese-centric and downloads from ModelScope; pins `numpy==1.26.4` and `moviepy==1.0.3`, which conflict with WhisperX (`numpy>=2.1`). Its English path is Whisper, already covered by WhisperX/faster-whisper. Documented as an optional isolated zh-ASR worker. ModelScope is unreachable here | Blocked by dependencies (shared env) + model host unreachable |
-| 4 | [WhisperX](https://github.com/m-bain/whisperX) | PyPI `whisperx==3.8.6` (repo `b904f02`, 3.8.7rc1) | BSD-2-Clause | **Install in isolated venv (optional high-accuracy engine)** | Separate venv (`torch~=2.8`, `pyannote-audio>=4`) — never in the API env | Transcription engine #1 when installed (word alignment, optional diarization). CPU fallback supported; GPU optional | Install/import verified separately; weights blocked (HF) — see TEST_RESULTS |
+| 4 | [WhisperX](https://github.com/m-bain/whisperX) | PyPI `whisperx==3.8.6` (repo `b904f02`, 3.8.7rc1) | BSD-2-Clause | **Install in isolated venv (optional high-accuracy engine)** | Separate venv (`torch~=2.8`, `pyannote-audio>=4`) — never in the API env | Transcription engine #1 when installed (word alignment, optional diarization). CPU fallback supported; GPU optional | **Verified:** the hashed lock (`workers/whisperx/requirements.lock`, 117 packages, torch 2.8.0) installs into an isolated Python 3.12 venv, `import whisperx` works, `transcribe.py --check` correctly reports the weights unavailable offline (Hugging Face blocked) — transcription itself **BLOCKED**. Audit: 14 known advisories in torch 2.8.0 / transformers 4.57.6, which WhisperX 3.8.6 pins (see SECURITY/TEST_RESULTS) |
 | 5 | [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) | `scenedetect==0.7.3` (repo `8a0b5ce`) | BSD-3-Clause | **Install & integrate (core)** | `uv` | Scene boundaries feed clip boundaries, crop-path shot splitting and thumbnail selection | See TEST_RESULTS |
 | 6 | [FFmpeg](https://github.com/FFmpeg/FFmpeg) | System binary 6.1.1 (repo HEAD `3a78197` inspected) | LGPL-2.1+; **this build is GPL** (`--enable-gpl`, libx264) | **Use system binary (core renderer)** | apt / Docker base image | Invoked as a separate process (no linking). All untrusted inputs run with `-protocol_whitelist` and `-format_whitelist` | See TEST_RESULTS |
 | 7 | [AI-Youtube-Shorts-Generator](https://github.com/Anil-matcha/AI-Youtube-Shorts-Generator) | repo `1142a74` | MIT | **Evaluated — not installed** | — | Default mode requires the paid MuAPI service; local mode = yt-dlp + faster-whisper + OpenAI/Gemini + OpenCV crop, all covered by better components below. Its yt-dlp YouTube download path is not an authorized access method for arbitrary videos. Idea reused: cache transcripts to avoid re-transcription | Not needed (redundant) |
@@ -76,6 +76,16 @@ channels (see §4).
 | psycopg 3 / psycopg-pool | 3.3.9 / 3.3.3 | LGPL-3.0 (dynamically imported, unmodified) | PostgreSQL driver used by LangGraph's checkpointer |
 | FastAPI / SQLAlchemy / Alembic / Redis client | see `backend/uv.lock` | MIT/BSD | API, ORM, migrations, wake-ups and caching |
 | Next.js / React | see `frontend/package-lock.json` | MIT | Web UI |
+| Caddy | 2 (official image) | Apache-2.0 | Front door with automatic HTTPS; routes `/api` straight to the API and sets a trustworthy client address |
+| Valkey | 8 (official image) | BSD-3-Clause | Redis-protocol server for wake-ups/throttling in the Docker deployment. Chosen over Redis because Redis 7.4+ (what `redis:7-alpine` resolves to) is under the source-available RSALv2/SSPLv1 licences |
+| Ollama | 0.40.16 (official image, optional `local-ai` profile) | MIT | Local language models. Verified with Llama 3.2 1B (Q4_0) and Qwen 2.5 3B (Q4_K_M) GGUF files from Docker Hub's `ai/` namespace (OCI manifests and layer digests verified). Building llama.cpp from GitHub sources was not permitted in this environment, so Ollama was used instead |
+
+**Supply-chain checks:** `pip-audit` (PyPI advisory database) found no known vulnerabilities in the
+123 PyPI runtime packages of `backend/uv.lock`; `npm audit` found none in the frontend. The
+git-pinned Instagram SDK is not covered by any advisory database (its source was inspected at the pinned commit in Phase 1; it is used only for media listing, container polling and insights).
+`httpx2`/`httpcore2` in the lock are Pydantic's maintained HTTPX successor (project metadata points to
+`github.com/pydantic/httpx2`), required by `openai`, `huggingface-hub` and `langsmith` — checked
+because the name resembles `httpx` and the release was two days old.
 
 **Deliberately excluded: `yt-dlp` and any third-party downloader.** YouTube's Terms of Service
 prohibit downloading content except through features the service provides or with permission,

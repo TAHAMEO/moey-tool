@@ -1,0 +1,15 @@
+# Bare-metal front door: /api to the API, everything else to the web app.
+clips.example.com {
+	encode zstd gzip
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000 {
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

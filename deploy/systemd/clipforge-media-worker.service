@@ -1,0 +1,22 @@
+[Unit]
+Description=CLIPFORGE media worker (decoding, transcription, rendering; no secrets)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+# A separate account and an environment file WITHOUT the master key or platform secrets.
+User=clipforge-media
+Group=clipforge
+WorkingDirectory=/opt/clipforge/backend
+EnvironmentFile=/etc/clipforge/media.env
+Environment=CLIPFORGE_DISABLE_DEV_KEY=1
+ExecStart=/opt/clipforge/backend/.venv/bin/clipforge worker --queues media
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/clipforge
+
+[Install]
+WantedBy=multi-user.target

@@ -135,6 +135,28 @@ def read_secret(db: Session, secret_id: uuid.UUID) -> str:
     return plaintext.decode()
 
 
+def rotate_all(db: Session) -> dict[str, int]:
+    """Re-encrypt every secret still under a previous master key (reading re-encrypts).
+
+    Returns counts; when ``remaining`` is 0 the previous key(s) can be removed.
+    """
+    from sqlalchemy import select
+
+    box = get_box()
+    rotated = failed = 0
+    for row in db.execute(select(Secret)).scalars().all():
+        if not box.needs_rotation(row.key_id):
+            continue
+        try:
+            read_secret(db, row.id)
+            rotated += 1
+        except SecretDecryptionError:
+            failed += 1
+    db.flush()
+    remaining = sum(1 for row in db.execute(select(Secret)).scalars() if box.needs_rotation(row.key_id))
+    return {"rotated": rotated, "failed": failed, "remaining": remaining}
+
+
 def read_secret_json(db: Session, secret_id: uuid.UUID) -> dict[str, Any]:
     return json.loads(read_secret(db, secret_id))
 
