@@ -53,6 +53,9 @@ class TaskSpec:
     project_id: uuid.UUID | None = None
     max_providers: int = 3
     exclude_connections: frozenset[uuid.UUID] = frozenset()
+    #: Models that must not answer (an independent second opinion needs a different model,
+    #: not the same model reached through another connection).
+    exclude_models: frozenset[str] = frozenset()
     prefer_connection: uuid.UUID | None = None
 
 
@@ -123,6 +126,7 @@ def _cache_key(task: TaskSpec, messages: list[ChatMessage], schema: dict | None)
         # A request for an independent opinion must never be answered from the
         # cache entry of the provider it is trying to get away from.
         "exclude": sorted(str(c) for c in task.exclude_connections),
+        "exclude_models": sorted(task.exclude_models),
         "messages": [
             {
                 "r": m.role,
@@ -212,6 +216,8 @@ class ModelHub:
                 continue
             for model in conn.models:
                 if not model.enabled or not model.capabilities.get("chat", True):
+                    continue
+                if model.model_id in task.exclude_models:
                     continue
                 if task.needs_vision and not model.capabilities.get("vision"):
                     continue

@@ -27,3 +27,4 @@ frontend/playwright-report/
 *.tsbuildinfo
 frontend/next-env.d.ts
 docker-compose.override.yml
+/backups/

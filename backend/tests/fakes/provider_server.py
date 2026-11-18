@@ -1,4 +1,4 @@
-"""Local fake of OpenAI-compatible, Gemini and Anthropic HTTP APIs.
+"""Local fake of OpenAI-compatible, Ollama, Gemini and Anthropic HTTP APIs.
 
 Used only for *contract* tests of CLIPFORGE's adapters and router (error
 classification, fallback, budgets, caching). It reproduces documented request
@@ -57,6 +57,9 @@ class FakeProviderServer:
                         self._send(200, {"data": [{"id": i} for i in ids]})
                     else:
                         self._send(200, {"object": "list", "data": [{"id": i, "object": "model"} for i in ids]})
+                elif self.path.startswith("/api/tags"):
+                    ids = server.behavior.get("models", ["fake-small-1b", "fake-pro-70b"])
+                    self._send(200, {"models": [{"name": i} for i in ids]})
                 elif self.path.startswith("/v1beta/models"):
                     self._send(200, {"models": [{"name": "models/gemini-2.5-flash", "inputTokenLimit": 1048576,
                                                  "supportedGenerationMethods": ["generateContent"]}]})
@@ -91,6 +94,9 @@ class FakeProviderServer:
                         "content": [{"type": "text", "text": reply}], "stop_reason": "end_turn",
                         "usage": {"input_tokens": 90, "output_tokens": 25},
                     })
+                elif self.path == "/api/chat":  # Ollama native
+                    self._send(200, {"model": body.get("model"), "message": {"role": "assistant", "content": reply},
+                                     "done": True, "done_reason": "stop", "prompt_eval_count": 80, "eval_count": 12})
                 elif self.path.endswith("/embeddings"):
                     inputs = body.get("input") or []
                     self._send(200, {"data": [{"index": i, "embedding": [0.1, 0.2, 0.3]} for i, _ in enumerate(inputs)]})

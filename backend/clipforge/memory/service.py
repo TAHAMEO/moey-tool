@@ -68,19 +68,25 @@ class HubChatModel(BaseChatModel):
             content = message.content if isinstance(message.content, str) else json.dumps(message.content)
             converted.append(ChatMessage(role, content))
         response_format = kwargs.get("response_format") or {}
+        # Extraction runs in a background job, and Mem0's prompt is long (~8k tokens): a CPU-only
+        # local model can need minutes, so allow them.
         task = TaskSpec(self.task_name, quality=self.quality, needs_json=response_format.get("type") == "json_object",
-                        temperature=0.0, max_tokens=1200, cache_ttl_s=7 * 24 * 3600, max_providers=2)
+                        temperature=0.0, max_tokens=1200, cache_ttl_s=7 * 24 * 3600, max_providers=2, timeout_s=420.0)
         result = hub.complete(task, converted)
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=result.text))])
 
 
 class MemoryService:
     def __init__(self) -> None:
-        from mem0 import Memory
-
         settings = get_settings()
         history_dir = settings.data_dir / "mem0"
         history_dir.mkdir(parents=True, exist_ok=True)
+        # Mem0 creates its state directory (default ~/.mem0) when it is first imported.
+        # Keep it in the data directory: the home directory may not be writable (containers)
+        # and the state must survive restarts and be included in backups.
+        os.environ.setdefault("MEM0_DIR", str(history_dir))
+        from mem0 import Memory
+
         config = {
             "vector_store": {
                 "provider": "pgvector",
@@ -99,7 +105,7 @@ class MemoryService:
         self._lock = threading.Lock()
 
     @staticmethod
-    def _llm_available() -> bool:
+    def llm_available() -> bool:
         with session_scope() as db:
             candidates, _ = hub.candidates(db, TaskSpec("memory_extract", quality=1), 2000)
         return bool(candidates)
@@ -113,7 +119,7 @@ class MemoryService:
                  metadata: dict[str, Any] | None = None, infer: bool | None = None) -> list[dict[str, Any]]:
         """Store a memory. Returns the Mem0 events (ADD/UPDATE/DELETE/NONE)."""
         meta = {"category": category, "stored_at": datetime.now(UTC).isoformat(), **(metadata or {})}
-        use_llm = self._llm_available() if infer is None else infer
+        use_llm = self.llm_available() if infer is None else infer
         with self._lock:
             if use_llm:
                 try:
@@ -130,6 +136,24 @@ class MemoryService:
             out = self._memory.add([{"role": "user", "content": text}], metadata=meta, infer=False,
                                    **self._scope(user_id, agent))
             return out.get("results", []) if isinstance(out, dict) else out
+
+    def refine(self, text: str, *, verbatim_id: str, user_id: str | None = None, agent: bool = False,
+               category: str = "fact") -> list[dict[str, Any]]:
+        """Let the LLM turn a memory stored verbatim into clean facts (Mem0 ADD/UPDATE/DELETE).
+
+        The verbatim copy is removed only when the facts were stored as separate entries;
+        if the model updated the verbatim entry itself, or found nothing new, it stays.
+        """
+        meta = {"category": category, "stored_at": datetime.now(UTC).isoformat(), "refined_from": verbatim_id}
+        with self._lock:
+            out = self._memory.add([{"role": "user", "content": text}], metadata=meta, infer=True,
+                                   **self._scope(user_id, agent))
+        events = out.get("results", []) if isinstance(out, dict) else out
+        written = {e.get("id") for e in events if e.get("event") in ("ADD", "UPDATE")}
+        removed = {e.get("id") for e in events if e.get("event") == "DELETE"}
+        if written and verbatim_id not in written and verbatim_id not in removed:
+            self.delete(verbatim_id)
+        return events
 
     def update(self, memory_id: str, text: str) -> dict[str, Any]:
         with self._lock:

@@ -400,6 +400,19 @@ function KnowledgeTab() {
                 </div>
               )}
               <p className="mt-2 text-[11px] text-faint">Answered by {k.providers.join(", ") || "—"}</p>
+              {(k.responses ?? []).length > 1 && (
+                <details className="mt-2 text-[12px]">
+                  <summary className="cursor-pointer font-medium text-muted hover:text-text">Compare the {(k.responses ?? []).length} answers</summary>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    {(k.responses ?? []).map((r, i) => (
+                      <div key={i} className="rounded-lg bg-surface-2 p-3">
+                        <p className="font-medium">{r.provider} · <span className="text-faint">{r.model}</span></p>
+                        <p className="mt-1 whitespace-pre-line leading-relaxed text-muted">{r.answer}</p>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
               {can("editor") && k.verification_status !== "verified" && k.verification_status !== "rejected" && (
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" variant="secondary" icon={<Check className="size-3.5" />} onClick={() => verify(k.id, "verified")}>Mark correct</Button>

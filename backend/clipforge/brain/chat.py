@@ -280,9 +280,9 @@ def _act_status(state: ChatState) -> ChatState:
 
 def _act_remember(state: ChatState) -> ChatState:
     _require(state, "editor")
-    from ..memory.service import get_memory
+    from ..memory.tasks import remember_then_refine
 
-    events = get_memory().remember(state["text"], user_id=state["user_id"], category="preference")
+    events = remember_then_refine(intents.memory_text(state["text"]), user_id=state["user_id"], category="preference")
     suggestion: dict[str, Any] = intents.extract_preferences(state["text"])
     cards = [{"type": "settings_suggestion", "section": "clips", "patch": suggestion}] if suggestion else []
     stored = [e.get("memory") for e in events if e.get("event") in ("ADD", "UPDATE")]
@@ -362,8 +362,14 @@ def _act_approve(state: ChatState) -> ChatState:
 def _act_control(state: ChatState) -> ChatState:
     _require(state, "admin")
     action = state["parsed"]["control_action"]
+    user = uuid.UUID(state["user_id"])
     with session_scope() as db:
-        result = control.apply(db, action, user_id=uuid.UUID(state["user_id"]))
+        if action in ("hold_publishing", "resume_publishing"):
+            switch = "disable_integration" if action == "hold_publishing" else "enable_integration"
+            for platform in ("youtube", "instagram"):
+                result = control.apply(db, switch, user_id=user, integration=f"publish:{platform}")
+        else:
+            result = control.apply(db, action, user_id=user)
     return {"facts": {"control": action, "cancelled": result.get("cancelled_jobs", 0)},
             "actions": [{"step": "Applied control", "detail": action.replace("_", " ")}]}
 
@@ -517,6 +523,10 @@ def _reply_control(state: ChatState) -> str:
         "emergency_stop": f"Emergency stop is ON. I cancelled {facts['cancelled']} active job(s) and blocked external AI calls and publishing. Clear it in Settings when ready.",
         "pause": "All automation is paused. Running steps will stop at their next safe point.",
         "resume": "Automation resumed.",
+        "hold_publishing": ("Publishing is on hold: nothing will be posted to YouTube or Instagram until you say "
+                            "“resume publishing” (or switch it back on in Settings → Automation & safety). "
+                            "Processing and drafts continue as normal."),
+        "resume_publishing": "Publishing is back on. Posts still follow your publishing policy and daily limits.",
     }.get(facts["control"], "Done.")
 
 

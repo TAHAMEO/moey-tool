@@ -117,14 +117,14 @@ def test_question_without_model_is_honest(owner_client):
     assert "don't have an AI model connected" in reply["content"]
 
 
-def _local_provider(server, name="local-llm"):
+def _local_provider(server, name="local-llm", model="fake-pro-70b"):
     from clipforge.db.models import ProviderConnection
 
     with session_scope() as db:
         conn = ProviderConnection(provider_type="openai_compatible", name=name, base_url=f"{server.base}/v1", is_local=True)
         db.add(conn)
         db.flush()
-        sync_models(db, conn, [("fake-pro-70b", None, {})])
+        sync_models(db, conn, [(model, None, {})])
 
 
 @pytest.mark.contract
@@ -154,8 +154,8 @@ def test_knowledge_consensus_and_disagreement(owner_client):
         b.behavior["reply"] = json.dumps({"answer": "Reels posted in the early evening tend to reach more of your audience.",
                                           "claims": ["Evening posts reach more people", "Hashtags no longer matter at all"],
                                           "confidence": 0.8})
-        _local_provider(a, "model-a")
-        _local_provider(b, "model-b")
+        _local_provider(a, "model-a", model="alpha-pro-70b")
+        _local_provider(b, "model-b", model="beta-pro-70b")
         result = owner_client.post("/api/knowledge/ask", json={"question": "When should I post Reels?", "important": True})
         assert result.status_code == 200, result.text
         data = result.json()
@@ -166,6 +166,33 @@ def test_knowledge_consensus_and_disagreement(owner_client):
     assert listed[0]["agreement"] is not None
     verify = owner_client.patch(f"/api/knowledge/{listed[0]['id']}", json={"status": "verified", "note": "checked"})
     assert verify.json()["verification_status"] == "verified"
+
+
+@pytest.mark.contract
+def test_second_opinion_needs_a_different_model(owner_client):
+    """Two connections serving the same model are not two independent opinions."""
+    with FakeProviderServer() as a, FakeProviderServer() as b:
+        for server in (a, b):
+            server.behavior["reply"] = json.dumps({"answer": "Burn captions in for Reels.", "claims": [], "confidence": 0.9})
+        _local_provider(a, "ollama-native", model="qwen2.5:3b")
+        _local_provider(b, "ollama-openai-compatible", model="qwen2.5:3b")
+        data = owner_client.post("/api/knowledge/ask", json={"question": "Burn in captions?", "important": True}).json()
+        assert len(data["providers"]) == 1 and data["verification_status"] == "single_source"
+
+
+@pytest.mark.contract
+def test_dispute_is_always_explained(owner_client):
+    with FakeProviderServer() as a, FakeProviderServer() as b:
+        a.behavior["reply"] = json.dumps({"answer": "It depends entirely on the platform and the audience you have.",
+                                          "claims": [], "confidence": 0.5})
+        b.behavior["reply"] = json.dumps({"answer": "Always upload a separate SRT track; never burn captions into video.",
+                                          "claims": [], "confidence": 0.5})
+        _local_provider(a, "a", model="alpha-pro-70b")
+        _local_provider(b, "b", model="beta-pro-70b")
+        data = owner_client.post("/api/knowledge/ask", json={"question": "Captions: burn in or separate track?",
+                                                             "important": True}).json()
+        assert data["verification_status"] == "disputed"
+        assert data["disagreements"] and "differ in substance" in data["disagreements"][0]
 
 
 def test_emergency_stop_via_chat(owner_client):
@@ -242,3 +269,32 @@ def test_reply_cards_are_per_turn(owner_client):
     assert first["meta"]["cards"][0]["job_id"] != second["meta"]["cards"][0]["job_id"]
     status = _say(owner_client, conv, "what's the status?")
     assert all(c["type"] == "job" for c in status["meta"]["cards"]) and len(status["meta"]["actions"]) == 1
+
+
+def test_advice_questions_are_not_production_requests():
+    from clipforge.brain import intents
+
+    assert intents.parse("Give me one tip for writing a YouTube Shorts title.").intent == "question"
+    assert intents.parse("Any ideas for Reels about pricing?").intent == "question"
+    assert intents.parse("Make me 3 shorts").intent == "need_source"
+    assert intents.parse("give me the best clips").intent == "need_source"
+    assert intents.memory_text("Remember that my audience is mostly retail owners.") == "My audience is mostly retail owners."
+    assert intents.memory_text("please keep in mind: no profanity") == "No profanity"
+    assert intents.memory_text("I prefer bold captions") == "I prefer bold captions"
+
+
+def test_hold_and_resume_publishing_from_chat(owner_client):
+    from clipforge.brain import intents
+
+    assert intents.parse("hmm lets maybe hold off posting anything for now").control_action == "hold_publishing"
+    assert intents.parse("pause publishing").control_action == "hold_publishing"
+    assert intents.parse("don't post anything with profanity").intent != "control"  # a preference, not a hold
+    assert intents.parse("pause everything").control_action == "pause"
+    conv = _conversation(owner_client)
+    reply = _say(owner_client, conv, "let's hold off posting for now")
+    assert "on hold" in reply["content"]
+    control = owner_client.get("/api/settings").json()["control"]
+    assert set(control["disabled_integrations"]) == {"publish:youtube", "publish:instagram"}
+    assert control["paused"] is False  # processing continues
+    _say(owner_client, conv, "ok, resume publishing")
+    assert owner_client.get("/api/settings").json()["control"]["disabled_integrations"] == []

@@ -52,7 +52,9 @@ def search(q: str, scope: Literal["user", "brain"] = "user", principal: Principa
 
 @router.post("/memory")
 def add_memory(body: MemoryIn, request: Request, db: Session = Depends(get_db), principal: Principal = Depends(editor)) -> list[dict]:
-    events = get_memory().remember(body.text, user_id=str(principal.id), category="manual")
+    from ...memory.tasks import remember_then_refine
+
+    events = remember_then_refine(body.text, user_id=str(principal.id), category="manual")
     audit(db, "memory.add", user_id=principal.id, details={"events": len(events)}, ip=client_ip(request))
     return events
 

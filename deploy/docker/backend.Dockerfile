@@ -50,7 +50,7 @@ RUN apt-get update \
       libegl1 libgles2 libgl1 libglib2.0-0 libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 clipforge \
- && useradd --system --uid 10001 --gid clipforge --home-dir /app --no-create-home --shell /usr/sbin/nologin clipforge \
+ && useradd --system --uid 10001 --gid clipforge --home-dir /home/clipforge --create-home --shell /usr/sbin/nologin clipforge \
  && mkdir -p /data \
  && chown clipforge:clipforge /data
 
@@ -62,6 +62,8 @@ ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     CLIPFORGE_ENV=production \
     CLIPFORGE_DATA_DIR=/data \
+    HOME=/home/clipforge \
+    MEM0_DIR=/data/mem0 \
     MPLCONFIGDIR=/tmp/matplotlib
 WORKDIR /app/backend
 USER clipforge

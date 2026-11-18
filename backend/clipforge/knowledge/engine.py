@@ -38,6 +38,8 @@ log = logging.getLogger(__name__)
 
 REUSE_SIMILARITY = 0.86
 CLAIM_MATCH = 0.78
+#: Average answer similarity at or above which two models are considered to agree.
+CONSENSUS_SIMILARITY = 0.80
 SYSTEM_PROMPT = (
     "You are a careful expert assisting a video production system for YouTube Shorts and Instagram Reels. "
     "Answer concisely and factually. List the distinct factual claims your answer depends on. If you are not "
@@ -110,6 +112,9 @@ def _compare(answers: list[tuple[str, ProviderAnswer]]) -> tuple[float, list[str
             best = max(cosine(embedder.embed_one(claim), v) for v in b_vectors)
             if best < CLAIM_MATCH:
                 disagreements.append(f"{name_a} claims “{claim[:160]}” — not supported by {name_b}")
+    if agreement < CONSENSUS_SIMILARITY and not disagreements:
+        # Never report a dispute without saying what it is.
+        disagreements.append(f"The answers differ in substance (similarity {agreement:.2f}); compare them side by side.")
     return agreement, sorted(set(disagreements))[:10]
 
 
@@ -128,19 +133,22 @@ def ask(question: str, *, project_id: uuid.UUID | None = None, important: bool =
     answers: list[tuple[str, ProviderAnswer]] = []
     responses: list[dict[str, Any]] = []
     used: set[uuid.UUID] = set()
+    used_models: set[str] = set()
     cost = 0.0
     target = max_providers if important else 1
     for _ in range(max(1, target)):
         try:
             parsed, result = hub.complete_json(
                 TaskSpec("knowledge", quality=2, temperature=0.2, max_tokens=700, cache_ttl_s=30 * 24 * 3600,
-                         exclude_connections=frozenset(used), max_providers=2, job_id=job_id, project_id=project_id),
+                         exclude_connections=frozenset(used), exclude_models=frozenset(used_models), max_providers=2,
+                         job_id=job_id, project_id=project_id),
                 messages, ProviderAnswer,
             )
         except NoProviderAvailable:
             break
         if result.connection_id is not None:
             used.add(result.connection_id)
+        used_models.add(result.model)
         name = f"{result.connection_name}/{result.model}"
         answers.append((name, parsed))
         cost += result.cost_usd
@@ -159,7 +167,7 @@ def ask(question: str, *, project_id: uuid.UUID | None = None, important: bool =
     self_conf = sum(a.confidence for _, a in answers) / len(answers)
     if len(answers) == 1:
         status, confidence = "single_source", min(self_conf, 0.6)
-    elif agreement is not None and agreement >= 0.80 and len(disagreements) <= 1:
+    elif agreement is not None and agreement >= CONSENSUS_SIMILARITY and len(disagreements) <= 1:
         status, confidence = "consensus", min(0.9, 0.5 + 0.4 * agreement)
     else:
         status, confidence = "disputed", min(self_conf, 0.4)

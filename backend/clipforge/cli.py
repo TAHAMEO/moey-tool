@@ -177,6 +177,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     engines = engines_status()
     results.append(("speech recognition", any(e["available"] for e in engines),
                     ", ".join(f"{e['engine']}: {'ok' if e['available'] else 'no'}" for e in engines), True))
+    from .api.routes.health import memory_check
+
+    memory = memory_check()
+    results.append(("permanent memory", memory["ok"], memory.get("error", "pgvector store and history readable"), True))
     usage = shutil.disk_usage(settings.data_dir)
     results.append(("disk", usage.free > 5 * 1024**3, f"{usage.free / 1024**3:.1f} GB free in {settings.data_dir}", False))
     results.append(("google app", bool(settings.google_client_id and settings.google_client_secret),
@@ -202,6 +206,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Media, backups and memory files are private to the service account (some container
+    # runtimes start `exec` sessions with umask 000).
+    os.umask(0o077)
     parser = argparse.ArgumentParser(prog="clipforge", description="CLIPFORGE AI service and admin commands")
     sub = parser.add_subparsers(dest="command", required=True)
 

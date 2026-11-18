@@ -181,3 +181,22 @@ def test_model_profiles_inferred(db):
         assert models["gpt-5"].quality_tier == 3
         assert models["claude-haiku-4-5"].capabilities["vision"] is True
         assert models["text-embedding-3-small"].capabilities["chat"] is False
+
+
+def test_ollama_native_chat_sizes_the_context_window():
+    """Ollama defaults to a 4k context; long prompts (e.g. memory extraction) must request more."""
+    from clipforge.providers.adapters import OllamaAdapter
+
+    with FakeProviderServer() as server:
+        ollama = OllamaAdapter(api_key=None, base_url=f"{server.base}/v1")
+        out = ollama.chat([ChatMessage("user", "hi")], "llama3.2:1b", ChatParams(max_tokens=50))
+        assert out.text == "OK" and out.input_tokens == 80 and out.output_tokens == 12
+        sent = server.requests[-1]
+        assert sent["path"] == "/api/chat" and sent["body"]["stream"] is False
+        assert sent["body"]["options"]["num_ctx"] == 4096 and sent["body"]["options"]["num_predict"] == 50
+        long_prompt = "word " * 6000  # ~30k characters, like Mem0's extraction prompt
+        ollama.chat([ChatMessage("user", long_prompt)], "llama3.2:1b",
+                    ChatParams(max_tokens=800, json_schema={"type": "object"}))
+        sent = server.requests[-1]
+        assert sent["body"]["options"]["num_ctx"] == 16384 and sent["body"]["format"] == {"type": "object"}
+        assert [m.model_id for m in ollama.list_models()] == ["fake-small-1b", "fake-pro-70b"]

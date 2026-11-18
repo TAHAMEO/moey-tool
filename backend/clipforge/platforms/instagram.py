@@ -34,8 +34,8 @@ from .http import PlatformError, meta_error, request
 
 AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize"
 TOKEN_URL = "https://api.instagram.com/oauth/access_token"
-SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights",
-          "instagram_business_manage_comments"]
+#: Least privilege: profile, publishing and insights only (no comments or messages access).
+SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights"]
 REEL_METRICS = ["views", "reach", "likes", "comments", "shares", "saved", "total_interactions",
                 "ig_reels_avg_watch_time", "ig_reels_video_view_total_time"]
 

@@ -119,9 +119,16 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
     # --- global controls ---------------------------------------------------
     if re.search(r"\b(emergency stop|stop everything|kill switch|stop all (jobs|automation|publishing))\b", lower):
         return ParsedRequest("control", control_action="emergency_stop", **base)
-    if re.search(r"\b(pause|halt|freeze)\s+(all|everything|automation|publishing|jobs|work)\b", lower):
+    # Publishing only (processing continues): "let's hold off posting for now", "pause publishing".
+    if re.search(r"\b(hold off( on)?|stop|pause|halt|no more)\s+(posting|publishing|uploading)\b"
+                 r"|\b(don'?t|do not)\s+(post|publish|upload)\s+anything\s+(for now|yet|until)\b", lower):
+        return ParsedRequest("control", control_action="hold_publishing", **base)
+    if re.search(r"\b(resume|restart|start|continue)\s+(posting|publishing|uploading)\b|\b(posting|publishing) again\b",
+                 lower):
+        return ParsedRequest("control", control_action="resume_publishing", **base)
+    if re.search(r"\b(pause|halt|freeze)\s+(all|everything|automation|jobs|work)\b", lower):
         return ParsedRequest("control", control_action="pause", **base)
-    if re.search(r"\b(resume|unpause|continue)\s+(all|everything|automation|publishing|jobs|work)\b", lower):
+    if re.search(r"\b(resume|unpause|continue)\s+(all|everything|automation|jobs|work)\b", lower):
         return ParsedRequest("control", control_action="resume", **base)
 
     clipish = bool(re.search(r"\b(clip|short|reel|highlight|cut|edit|analy[sz]e|process|watch|make|create|turn|find|best|moments?|repurpose)", lower))
@@ -175,15 +182,29 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
     if re.search(r"\b(connect|link|add|set ?up)\b.*\b(youtube|instagram|openai|gemini|claude|anthropic|ollama|api key|google drive|provider|model)\b", lower):
         return ParsedRequest("connect", **base)
     action = re.search(r"\b(make|create|cut|generate|turn|produce|extract|find|give me|edit|repurpose)\b", lower)
-    if action and re.search(r"\b(clips?|shorts?|reels?|videos?|highlights?)\b", lower):
+    # "Give me a tip for writing a Shorts title" asks for advice, not for production.
+    advice = re.search(r"\b(tips?|advice|ideas?|suggestions?|examples?|best practices?|explain|why|how (do|can|should|to|would))\b",
+                       lower)
+    if action and not advice and re.search(r"\b(clips?|shorts?|reels?|videos?|highlights?)\b", lower):
         return ParsedRequest("need_source", count=_count(text), platforms=_platforms(lower), **base)
     if re.search(r"^(hi|hello|hey|yo|hiya|good (morning|afternoon|evening))\b", lower) and len(lower) < 40:
         return ParsedRequest("greeting", **base)
     if re.search(r"\b(help|what can you do|how do(es)? (this|it) work|getting started)\b", lower):
         return ParsedRequest("help", **base)
-    if text.endswith("?") or re.match(r"^(what|why|how|when|which|who|should|is|are|can|does|do)\b", lower):
+    if text.endswith("?") or re.match(r"^(what|why|how|when|which|who|should|is|are|can|does|do)\b", lower) \
+            or re.match(r"^(please )?(give me|tell me|explain|suggest|recommend|list|describe)\b", lower):
         return ParsedRequest("question", confidence=0.7, **base)
     return ParsedRequest("chat", confidence=0.5, **base)
+
+
+_MEMORY_COMMAND = re.compile(r"^\s*(please\s+)?(remember|note(\s+down)?|keep in mind|don'?t forget)(\s+that)?\s*[:,-]?\s*",
+                             re.IGNORECASE)
+
+
+def memory_text(text: str) -> str:
+    """The fact itself, without the command: "Remember that my audience…" -> "My audience…"."""
+    cleaned = _MEMORY_COMMAND.sub("", text or "").strip()
+    return (cleaned[:1].upper() + cleaned[1:]) if cleaned else (text or "").strip()
 
 
 def extract_preferences(text: str) -> dict:

@@ -49,6 +49,21 @@ def _hashtag(phrase: str) -> str:
     return "#" + "".join(w[:1].upper() + w[1:] for w in words)[:40] if words else ""
 
 
+def one_line(text: str) -> str:
+    """First meaningful line of model output, without markdown, labels or wrapping quotes."""
+    for line in (text or "").splitlines():
+        line = re.sub(r"^\s*(#+\s*|[-*]\s+|\*\*)?(youtube\s+)?(title|caption)\s*:\s*", "", line, flags=re.IGNORECASE)
+        line = re.sub(r"\s+", " ", line.replace("**", "")).strip().strip('"“”\'').strip()
+        if line:
+            return line
+    return ""
+
+
+def youtube_safe(text: str) -> str:
+    """The YouTube API rejects titles and descriptions containing < or >."""
+    return (text or "").replace("<", "‹").replace(">", "›")
+
+
 def _clean_sentence(text: str) -> str:
     text = tu.strip_discourse(text).strip()
     text = re.sub(r"\s+", " ", text)
@@ -68,6 +83,7 @@ def local_copy(clip_text: str, hook: str, *, channel: str = "", source_title: st
         lead = tu.title_case(keywords[0]) if keywords else "Watch This"
         fragment = " ".join(hook_clean.split()[:8])
         title = f"{lead}: {fragment}" if fragment and fragment.lower() not in lead.lower() else lead
+    title = youtube_safe(one_line(title))
     title = title[:YT_TITLE_MAX - 9].rstrip() + " #shorts" if "#shorts" not in title.lower() else title[:YT_TITLE_MAX]
     summary = " ".join(_clean_sentence(s) for s in sents[1:3]) or hook_clean
     tags = []
@@ -86,7 +102,7 @@ def local_copy(clip_text: str, hook: str, *, channel: str = "", source_title: st
     ig_tags = list(dict.fromkeys(hashtags + ["#reels"]))[:IG_HASHTAGS_MAX]
     thumb = " ".join(hook_clean.split()[:7])
     return PlatformCopy(
-        youtube_title=title, youtube_description=yt_description[:YT_DESCRIPTION_MAX], youtube_tags=tags,
+        youtube_title=title, youtube_description=youtube_safe(yt_description)[:YT_DESCRIPTION_MAX], youtube_tags=tags,
         instagram_caption=(ig_caption + "\n\n" + " ".join(ig_tags))[:IG_CAPTION_MAX], instagram_hashtags=ig_tags,
         thumbnail_text=thumb, keywords=keywords,
     )
@@ -119,22 +135,22 @@ def generate(clip_text: str, hook: str, *, channel: str = "", source_title: str 
     ]
     try:
         parsed, result = hub.complete_json(
-            TaskSpec("metadata", quality=1, temperature=0.5, max_tokens=900, cache_ttl_s=30 * 24 * 3600,
+            TaskSpec("metadata", quality=2, temperature=0.5, max_tokens=900, cache_ttl_s=30 * 24 * 3600,
                      job_id=job_id, project_id=project_id, max_providers=2), messages, LLMCopy)
     except NoProviderAvailable:
         return base
-    title = parsed.youtube_title.strip()
+    title = youtube_safe(one_line(parsed.youtube_title)) or base.youtube_title
     if "#shorts" not in title.lower() and len(title) <= YT_TITLE_MAX - 8:
         title += " #shorts"
     hashtags = [h if h.startswith("#") else "#" + h for h in (re.sub(r"\s+", "", t) for t in parsed.instagram_hashtags) if len(h) > 1]
     credit = f"\n\nSource: {source_title or 'original video'} — {source_url}" if (not owned_source and source_url) else ""
     return PlatformCopy(
         youtube_title=title[:YT_TITLE_MAX],
-        youtube_description=(parsed.youtube_description.strip() + credit)[:YT_DESCRIPTION_MAX],
+        youtube_description=youtube_safe(parsed.youtube_description.strip() + credit)[:YT_DESCRIPTION_MAX],
         youtube_tags=[t[:60] for t in parsed.youtube_tags][:15] or base.youtube_tags,
         instagram_caption=(parsed.instagram_caption.strip() + "\n\n" + " ".join(hashtags))[:IG_CAPTION_MAX],
         instagram_hashtags=hashtags[:IG_HASHTAGS_MAX] or base.instagram_hashtags,
-        thumbnail_text=parsed.thumbnail_text.strip() or base.thumbnail_text,
+        thumbnail_text=one_line(parsed.thumbnail_text) or base.thumbnail_text,
         method=f"llm:{result.model}",
         keywords=base.keywords,
     )

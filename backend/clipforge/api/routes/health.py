@@ -40,6 +40,17 @@ def _checks(db: Session) -> dict:
     return checks
 
 
+def memory_check() -> dict:
+    """Permanent memory is used best-effort by the chat, so problems must be visible here."""
+    try:
+        from ...memory.service import get_memory
+
+        get_memory().list(user_id="__healthcheck__", limit=1)
+        return {"ok": True}
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        return {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"[:300]}
+
+
 @router.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -59,6 +70,7 @@ def diagnostics(db: Session = Depends(get_db), _: Principal = Depends(admin)) ->
     checks = _checks(db)
     checks["models"] = model_registry.status()
     checks["transcription_engines"] = engines_status()
+    checks["memory"] = memory_check()
     settings = get_settings()
     checks["config"] = {
         "env": settings.env,

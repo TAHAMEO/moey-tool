@@ -92,7 +92,8 @@ def run_backup(label: str = "scheduled") -> dict:
                           check=False, capture_output=True, text=True, timeout=3600)
     if proc.returncode != 0:
         raise RuntimeError(f"pg_dump failed: {proc.stderr[-500:]}")
-    manifest = {"created_at": now.isoformat(), "database": dump.name, "size": dump.stat().st_size, "label": label}
+    manifest = {"name": target.name, "created_at": now.isoformat(), "database": dump.name,
+                "size": dump.stat().st_size, "label": label}
     try:
         from ..memory.service import get_memory
 

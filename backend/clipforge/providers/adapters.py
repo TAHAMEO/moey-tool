@@ -178,15 +178,57 @@ class OpenAIAdapter(OpenAICompatibleAdapter):
 
 
 class OllamaAdapter(OpenAICompatibleAdapter):
-    """Ollama via its OpenAI-compatible API, with native model discovery."""
+    """Ollama through its native API.
+
+    The native chat endpoint lets the client size the context window: Ollama
+    serves models with a 4k-token context by default, which rejects long
+    prompts (e.g. memory fact extraction, ~8k tokens) that the model itself
+    could handle. The window grows in fixed steps so the model isn't reloaded
+    for every request size.
+    """
 
     provider_type = "ollama"
     default_base_url = "http://localhost:11434/v1"
+    CONTEXT_STEPS = (4096, 8192, 16384, 32768)
+
+    @property
+    def _root(self) -> str:
+        return self.base_url.removesuffix("/v1")
+
+    def context_for(self, messages: list[ChatMessage], max_tokens: int) -> int:
+        needed = int(sum(len(m.content) for m in messages) / 3.5) + max_tokens + 256
+        return next((step for step in self.CONTEXT_STEPS if step >= needed), self.CONTEXT_STEPS[-1])
+
+    def chat(self, messages: list[ChatMessage], model: str, params: ChatParams) -> ChatResult:
+        body: dict[str, Any] = {
+            "model": model,
+            "stream": False,
+            "messages": [
+                {"role": m.role, "content": m.content, **({"images": [i.b64 for i in m.images]} if m.images else {})}
+                for m in messages
+            ],
+            "options": {"temperature": params.temperature, "num_predict": params.max_tokens,
+                        "num_ctx": self.context_for(messages, params.max_tokens)},
+        }
+        if params.json_schema is not None:
+            body["format"] = params.json_schema
+        elif params.json_mode:
+            body["format"] = "json"
+        data, latency = _post(f"{self._root}/api/chat", headers={"Content-Type": "application/json"}, body=body,
+                              timeout=params.timeout_s)
+        message = data.get("message") or {}
+        return ChatResult(
+            text=message.get("content") or "",
+            model=data.get("model") or model,
+            input_tokens=int(data.get("prompt_eval_count") or 0),
+            output_tokens=int(data.get("eval_count") or 0),
+            finish_reason=data.get("done_reason"),
+            latency_ms=latency,
+        )
 
     def list_models(self) -> list[DiscoveredModel]:
-        root = self.base_url.removesuffix("/v1")
         try:
-            data = _get(f"{root}/api/tags", headers={})
+            data = _get(f"{self._root}/api/tags", headers={})
             return [DiscoveredModel(model_id=m["name"]) for m in data.get("models", []) if m.get("name")]
         except ProviderError:
             return super().list_models()
