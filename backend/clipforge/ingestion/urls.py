@@ -21,6 +21,15 @@ YT_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.co
 IG_HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
 
 
+PLATFORM_NAMES = {"youtube": "YouTube", "instagram": "Instagram", "gdrive": "Google Drive", "google_drive": "Google Drive",
+                  "direct": "Direct link", "upload": "Upload", "live_ingest": "Live stream"}
+
+
+def display_name(platform: str) -> str:
+    """Human spelling of a platform key (``youtube`` -> ``YouTube``)."""
+    return PLATFORM_NAMES.get(platform, platform.replace("_", " ").title())
+
+
 @dataclass
 class DetectedSource:
     original_url: str

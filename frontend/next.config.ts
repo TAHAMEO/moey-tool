@@ -29,6 +29,11 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
+  experimental: {
+    // Only used when this server proxies /api itself (development, or no Caddy in front):
+    // multi-GB uploads take longer than the 30 s default.
+    proxyTimeout: 60 * 60 * 1000,
+  },
   async rewrites() {
     // Same-origin API: the session cookie never has to cross origins.
     return [{ source: "/api/:path*", destination: `${API}/api/:path*` }];

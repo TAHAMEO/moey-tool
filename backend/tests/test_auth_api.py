@@ -65,3 +65,26 @@ def test_security_headers(client):
 def test_audit_log_records_auth_events(owner_client):
     rows = owner_client.get("/api/audit").json()
     assert any(r["action"] == "auth.setup_owner" for r in rows)
+
+
+def test_client_ip_cannot_be_forged_through_forwarded_header(app, client):
+    """Only the right-most X-Forwarded-For entry (appended by the trusted proxy) counts;
+    a value the client puts in the header itself must not become its recorded address."""
+    from fastapi import Request
+
+    from clipforge.api.deps import client_ip
+
+    def ip_for(header: str | None, hops: int) -> str | None:
+        app.state.trusted_proxy_hops = hops
+        headers = [(b"x-forwarded-for", header.encode())] if header else []
+        scope = {"type": "http", "headers": headers, "client": ("10.0.0.5", 1234), "app": app}
+        return client_ip(Request(scope))
+
+    try:
+        assert ip_for("6.6.6.6, 203.0.113.9", 1) == "203.0.113.9"   # forged left part ignored
+        assert ip_for("203.0.113.9", 1) == "203.0.113.9"             # what Caddy sends
+        assert ip_for(None, 1) == "10.0.0.5"                          # direct connection
+        assert ip_for("6.6.6.6, 198.51.100.1, 203.0.113.9", 2) == "198.51.100.1"
+        assert ip_for("6.6.6.6", 0) == "10.0.0.5"                     # header ignored entirely
+    finally:
+        app.state.trusted_proxy_hops = 1

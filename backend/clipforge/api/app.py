@@ -28,7 +28,7 @@ def create_app() -> FastAPI:
         redoc_url=None,
         openapi_url=None if settings.is_production else f"{API_PREFIX}/openapi.json",
     )
-    app.state.trust_proxy = True
+    app.state.trusted_proxy_hops = settings.trusted_proxy_hops
 
     app.add_middleware(
         CORSMiddleware,

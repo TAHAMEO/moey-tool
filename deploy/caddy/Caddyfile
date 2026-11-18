@@ -1,0 +1,36 @@
+# CLIPFORGE front door.
+#
+# CLIPFORGE_SITE_ADDRESS
+#   ":80"                 plain HTTP (default; the compose file publishes it on CLIPFORGE_HTTP_PORT)
+#   "clips.example.com"   automatic HTTPS from Let's Encrypt (publish ports 80 and 443)
+#
+# /api goes straight to the API: uploads of several GB stream without passing through
+# Node, and Caddy replaces any client-supplied X-Forwarded-For with the real client
+# address (the API trusts exactly one proxy hop).
+
+{
+	admin off
+}
+
+{$CLIPFORGE_SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

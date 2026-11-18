@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from ..analytics.compare import Row, dataset, permutation_test
 from ..db.base import utcnow
 from ..db.models import Experiment, LearningRecord, Strategy
+from ..ingestion.urls import display_name
 from ..media.highlights import DEFAULT_WEIGHTS
 
 log = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ def analyze(db: Session) -> list[LearningRecord]:
                 continue
             better, worse = (dim.label_a, dim.label_b) if effect > 0 else (dim.label_b, dim.label_a)
             ratio = float(np.exp(abs(effect)))
-            finding = (f"On {platform.title()}, {better} reached {ratio:.1f}× the views (relative to the platform median) "
+            finding = (f"On {display_name(platform)}, {better} reached {ratio:.1f}× the views (relative to the platform median) "
                        f"of {worse} ({len(a)} vs {len(b)} videos, p={p:.3f}).")
             duplicate = db.execute(select(LearningRecord).where(LearningRecord.status == "active",
                                                                 LearningRecord.platform == platform,

@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models import Clip, MetricSnapshot, OutputPackage, Publication, Render
+from ..ingestion.urls import display_name
 
 
 @dataclass
@@ -136,7 +137,7 @@ def summary(db: Session, platform: str | None = None) -> dict[str, Any]:
             "top": [{"title": r.title, "views": r.views, "age_hours": r.age_hours} for r in ranked[:3]],
             "bottom": [{"title": r.title, "views": r.views, "age_hours": r.age_hours} for r in ranked[-3:]],
         }
-        lines.append(f"{plat.title()}: {len(prow)} video(s) with data; median {median:,.0f} views; best so far “{ranked[0].title}” "
+        lines.append(f"{display_name(plat)}: {len(prow)} video(s) with data; median {median:,.0f} views; best so far “{ranked[0].title}” "
                      f"({ranked[0].views:,.0f} views at {ranked[0].age_hours:.0f}h).")
     out["text"] = "\n".join(lines) or "Published videos don't have analytics yet."
     return out

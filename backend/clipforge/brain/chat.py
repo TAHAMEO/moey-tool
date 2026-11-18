@@ -38,7 +38,7 @@ from ..db.models import (
     Source,
     Strategy,
 )
-from ..ingestion.urls import detect
+from ..ingestion.urls import detect, display_name
 from ..jobs import queue
 from ..providers.base import ChatMessage, NoProviderAvailable
 from ..providers.hub import TaskSpec, hub
@@ -203,6 +203,7 @@ def _act_process(state: ChatState) -> ChatState:
         for asset_id in state.get("attachments", [])[:5]:
             sources.append(("upload", {"asset_id": asset_id}))
         for kind, info in sources:
+            placeholder_title = False  # True when the title is a stand-in until the platform's metadata arrives
             if kind == "url":
                 source = db.execute(select(Source).where(Source.platform == info["platform"],
                                                          Source.external_id == info["external_id"])).scalar_one_or_none()
@@ -220,7 +221,8 @@ def _act_process(state: ChatState) -> ChatState:
                     stem = PurePosixPath(unquote(urlsplit(info["normalized_url"]).path)).stem.replace("_", " ").replace("-", " ")
                     title = stem.strip().title()[:120] or "Linked video"
                 else:
-                    title = f"{info['platform'].title()} {info['source_type']} {info['external_id'][:11]}"
+                    title = f"{display_name(info['platform'])} {info['source_type']} {info['external_id'][:11]}"
+                    placeholder_title = True
             else:
                 from ..db.models import MediaAsset
 
@@ -240,9 +242,11 @@ def _act_process(state: ChatState) -> ChatState:
                     db.flush()
                     asset.source_id = source.id
                 title = asset.info.get("filename") or "Uploaded video"
+            known_title = source.source_metadata.get("title")
             project = Project(user_id=user_id, source_id=source.id, conversation_id=uuid.UUID(state["conversation_id"]),
-                              title=source.source_metadata.get("title") or title, instruction=state["text"][:4000],
-                              request=params, status="queued", status_label="Checking link")
+                              title=known_title or title, instruction=state["text"][:4000],
+                              request={**params, "placeholder_title": placeholder_title and not known_title},
+                              status="queued", status_label="Checking link")
             db.add(project)
             db.flush()
             job = queue.enqueue(db, "workflow.video", {"project_id": str(project.id), "source_id": str(source.id)},
@@ -253,7 +257,8 @@ def _act_process(state: ChatState) -> ChatState:
             cards.append({"type": "job", "job_id": str(job.id), "project_id": str(project.id), "title": project.title})
             actions.append({"step": "Created project", "detail": project.title + (" (known source — cached analysis will be reused)" if reused else "")})
         if started:
-            actions.append({"step": "Started production", "detail": f"{params['count']} clip(s), {', '.join(params['aspects'])}, for {', '.join(params['platforms'])}"})
+            actions.append({"step": "Started production", "detail": f"{params['count']} clip(s), {', '.join(params['aspects'])}, "
+                                                                   f"for {', '.join(display_name(p) for p in params['platforms'])}"})
         paused = control.is_paused(db)
     return {"actions": actions, "cards": cards,
             "facts": {"started": started, "problems": problems, "params": params, "paused": paused}}
@@ -458,7 +463,7 @@ def _reply_process(state: ChatState) -> str:
         lines.append(
             f"On it. I've started {'a project' if n == 1 else f'{n} projects'} and I'm checking the link and what access is "
             f"available. Target: {params.get('count')} clip(s) in {', '.join(params.get('aspects', []))} for "
-            f"{' and '.join(p.title() for p in params.get('platforms', []))}"
+            f"{' and '.join(display_name(p) for p in params.get('platforms', []))}"
             + (f", focused on “{params['focus']}”" if params.get("focus") else "") + "."
         )
         if any(s["reused_source"] for s in started):

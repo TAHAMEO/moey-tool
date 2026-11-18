@@ -247,6 +247,9 @@ def mark_waiting(job_id: uuid.UUID, *, label: str, info: dict[str, Any] | None =
         job.locked_by = None
         job.lease_expires_at = None
         job.resume_value = None
+        # A suspension is a successful stop, not a failed attempt: resuming must
+        # not eat into the retry budget of later stages.
+        job.attempts = max(0, job.attempts - 1)
         job.checkpoint = {**(job.checkpoint or {}), "waiting": info or {}}
         db.add(JobEvent(job_id=job_id, message=f"Waiting: {label}", stage="waiting", data=info or {}))
         _progress_event(job)
@@ -265,6 +268,7 @@ def mark_paused(job_id: uuid.UUID, label: str = "Paused") -> None:
         job.status_label = label
         job.locked_by = None
         job.lease_expires_at = None
+        job.attempts = max(0, job.attempts - 1)  # pausing is not a failed attempt
         checkpoint = dict(job.checkpoint or {})
         checkpoint.pop("pause_requested", None)
         job.checkpoint = checkpoint

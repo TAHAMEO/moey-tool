@@ -164,7 +164,8 @@ class FasterWhisperEngine(Engine):
         model = self._local_model()
         if model:
             return True, f"model {get_settings().faster_whisper_model}"
-        return False, "model not downloaded (run scripts/download_models.sh on a host with Hugging Face access)"
+        return False, ("model not downloaded (run `clipforge download-models --faster-whisper`; "
+                       "needs access to huggingface.co)")
 
     def transcribe(self, wav: Path, start_s: float, end_s: float, language: str | None) -> list[WordOut]:
         from faster_whisper import WhisperModel

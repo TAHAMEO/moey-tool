@@ -38,9 +38,10 @@ def cmd_api(args: argparse.Namespace) -> int:
     if settings.is_production and not settings.resolved_master_keys():
         print("CLIPFORGE_MASTER_KEY is required in production (generate one with `clipforge gen-key`).", file=sys.stderr)
         return 2
+    # Forwarded headers are interpreted by the app itself (see deps.client_ip and
+    # CLIPFORGE_TRUSTED_PROXY_HOPS), never by uvicorn, so there is one source of truth.
     uvicorn.run("clipforge.api.app:create_app", factory=True, host=args.host, port=args.port,
-                proxy_headers=True, forwarded_allow_ips=args.forwarded_allow_ips, log_level=settings.log_level.lower(),
-                workers=args.workers)
+                proxy_headers=False, log_level=settings.log_level.lower(), workers=args.workers)
     return 0
 
 
@@ -106,6 +107,25 @@ def cmd_download_models(args: argparse.Namespace) -> int:
     from .media import models
 
     failed = 0
+    if args.faster_whisper:
+        from .config import get_settings
+
+        settings = get_settings()
+        target = settings.models_dir / "faster-whisper" / settings.faster_whisper_model
+        try:
+            from faster_whisper import download_model
+
+            download_model(settings.faster_whisper_model, output_dir=str(target))
+            print(f"ok    {'faster-whisper':16} {target}")
+        except Exception as exc:  # noqa: BLE001 - network/hub errors are reported, not raised
+            failed += 1
+            print(f"FAIL  {'faster-whisper':16} {exc.__class__.__name__}: {str(exc)[:200]}", file=sys.stderr)
+    if args.vosk or args.vosk_from:
+        try:
+            print(f"ok    {'vosk':16} {models.install_vosk(args.vosk_from)} (verified)")
+        except models.ModelUnavailable as exc:
+            failed += 1
+            print(f"FAIL  {'vosk':16} {exc}", file=sys.stderr)
     for key in models.MODELS:
         try:
             path = models.ensure(key)
@@ -119,8 +139,8 @@ def cmd_download_models(args: argparse.Namespace) -> int:
     for info in engines:
         print(f"asr   {info['engine']:16} {'available' if info['available'] else 'unavailable'} — {info['detail']}")
     if not any(info["available"] for info in engines):
-        print("No speech-recognition model is installed. Run scripts/download_models.sh (Vosk) "
-              "or set up the WhisperX worker; see docs/INSTALL.md.", file=sys.stderr)
+        print("No speech-recognition model is installed: run `clipforge download-models --vosk` "
+              "(or see docs/INSTALL.md for WhisperX).", file=sys.stderr)
         failed += 1
     return 1 if failed and args.strict else 0
 
@@ -163,8 +183,16 @@ def cmd_doctor(_: argparse.Namespace) -> int:
                     "needed for YouTube publishing", False))
     results.append(("meta app", bool(settings.meta_app_id and settings.meta_app_secret),
                     "needed for Instagram publishing", False))
-    if settings.is_production and not settings.public_base_url.startswith("https://"):
-        results.append(("public url", False, "use https:// in production (OAuth and secure cookies need it)", True))
+    from urllib.parse import urlsplit
+
+    public = urlsplit(settings.public_base_url)
+    local_only = public.hostname in ("localhost", "127.0.0.1", "::1")
+    if public.scheme != "https":
+        results.append(("public url", local_only,
+                        f"{settings.public_base_url}: fine on this machine only; use https:// for access from other devices "
+                        "(OAuth sign-in and secure cookies need it)" if local_only else
+                        f"{settings.public_base_url} is plain HTTP on a network address: set up HTTPS (docs/DEPLOYMENT.md)",
+                        settings.is_production and not local_only))
 
     width = max(len(r[0]) for r in results)
     for name, ok, detail, essential in results:
@@ -181,7 +209,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default=os.environ.get("CLIPFORGE_API_HOST", "127.0.0.1"))
     p.add_argument("--port", type=int, default=int(os.environ.get("CLIPFORGE_API_PORT", "8000")))
     p.add_argument("--workers", type=int, default=1)
-    p.add_argument("--forwarded-allow-ips", default=os.environ.get("CLIPFORGE_FORWARDED_ALLOW_IPS", "127.0.0.1"))
     p.set_defaults(func=cmd_api)
 
     p = sub.add_parser("worker", help="run a job worker")
@@ -200,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("backup", help="back up the database and memory now").set_defaults(func=cmd_backup)
     p = sub.add_parser("download-models", help="download and verify the local AI models")
     p.add_argument("--strict", action="store_true", help="exit non-zero if any model is missing")
+    p.add_argument("--vosk", action="store_true", help="also install the English speech model (~1.8 GB download)")
+    p.add_argument("--vosk-from", metavar="PATH", help="install the speech model from a local .zip or folder")
+    p.add_argument("--faster-whisper", action="store_true",
+                   help="also download the faster-whisper model (CLIPFORGE_FASTER_WHISPER_MODEL, from Hugging Face)")
     p.set_defaults(func=cmd_download_models)
     sub.add_parser("doctor", help="check that this installation is complete").set_defaults(func=cmd_doctor)
 

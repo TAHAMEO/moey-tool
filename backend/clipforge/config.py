@@ -27,6 +27,8 @@ class Settings(BaseSettings):
         env_prefix="CLIPFORGE_",
         env_file=(str(REPO_DIR / ".env"), ".env"),
         extra="ignore",
+        # An empty value (e.g. ``CLIPFORGE_YOUTUBE_API_KEY=`` in .env) means "not set".
+        env_ignore_empty=True,
     )
 
     env: Literal["development", "production", "test"] = "development"
@@ -49,6 +51,11 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:3000"
     allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
     login_max_failures: int = 8
+    #: Reverse proxies in front of the API that append the client address to
+    #: X-Forwarded-For (1 = the bundled Caddy). 0 ignores the header entirely.
+    #: Only the right-most entries are trusted: anything further left was sent
+    #: by the client and can be forged.
+    trusted_proxy_hops: int = Field(1, ge=0, le=5)
     login_lockout_minutes: int = 15
 
     # --- Workers ----------------------------------------------------------------

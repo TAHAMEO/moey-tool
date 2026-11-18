@@ -1,0 +1,177 @@
+# CLIPFORGE AI — single-server deployment.
+#
+#   ./scripts/install.sh           first-time setup (creates .env with fresh secrets, builds, starts)
+#   docker compose up -d           start / update after `git pull`
+#   docker compose logs -f api     follow a service
+#
+# Secrets live in .env (never committed). Compose reads it for ${...} substitution only;
+# each service receives just the variables listed for it below. The media worker, which
+# handles untrusted media files, never receives the master key or any platform secret.
+
+name: clipforge
+
+x-backend-image: &backend-image
+  image: clipforge-backend:${CLIPFORGE_VERSION:-local}
+  build:
+    context: .
+    dockerfile: deploy/docker/backend.Dockerfile
+    secrets: [extra_ca]
+  restart: unless-stopped
+  volumes:
+    - clipforge-data:/data
+
+x-common-env: &common-env
+  CLIPFORGE_ENV: production
+  CLIPFORGE_DATABASE_URL: postgresql+psycopg://clipforge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/clipforge
+  CLIPFORGE_REDIS_URL: redis://redis:6379/0
+  CLIPFORGE_DATA_DIR: /data
+  CLIPFORGE_PUBLIC_BASE_URL: ${CLIPFORGE_PUBLIC_BASE_URL:-http://localhost:3000}
+  CLIPFORGE_COOKIE_SECURE: ${CLIPFORGE_COOKIE_SECURE:-}
+  CLIPFORGE_LOG_LEVEL: ${CLIPFORGE_LOG_LEVEL:-INFO}
+  CLIPFORGE_STORAGE_BACKEND: ${CLIPFORGE_STORAGE_BACKEND:-local}
+  CLIPFORGE_S3_ENDPOINT_URL: ${CLIPFORGE_S3_ENDPOINT_URL:-}
+  CLIPFORGE_S3_BUCKET: ${CLIPFORGE_S3_BUCKET:-}
+  CLIPFORGE_S3_REGION: ${CLIPFORGE_S3_REGION:-}
+  CLIPFORGE_S3_ACCESS_KEY_ID: ${CLIPFORGE_S3_ACCESS_KEY_ID:-}
+  CLIPFORGE_S3_SECRET_ACCESS_KEY: ${CLIPFORGE_S3_SECRET_ACCESS_KEY:-}
+  CLIPFORGE_LIVE_PUBLIC_HOST: ${CLIPFORGE_LIVE_PUBLIC_HOST:-localhost}
+  CLIPFORGE_TRUSTED_PROXY_HOPS: "1"
+  # Behind a TLS-inspecting egress proxy, mount its CA and point these at it (see docs/DEPLOYMENT.md).
+  SSL_CERT_FILE: ${CLIPFORGE_EXTRA_CA_FILE:-/etc/ssl/certs/ca-certificates.crt}
+  REQUESTS_CA_BUNDLE: ${CLIPFORGE_EXTRA_CA_FILE:-/etc/ssl/certs/ca-certificates.crt}
+
+x-secret-env: &secret-env
+  CLIPFORGE_MASTER_KEY: ${CLIPFORGE_MASTER_KEY:?set CLIPFORGE_MASTER_KEY in .env (clipforge gen-key)}
+  CLIPFORGE_MASTER_KEY_PREVIOUS: ${CLIPFORGE_MASTER_KEY_PREVIOUS:-}
+  CLIPFORGE_GOOGLE_CLIENT_ID: ${CLIPFORGE_GOOGLE_CLIENT_ID:-}
+  CLIPFORGE_GOOGLE_CLIENT_SECRET: ${CLIPFORGE_GOOGLE_CLIENT_SECRET:-}
+  CLIPFORGE_YOUTUBE_API_KEY: ${CLIPFORGE_YOUTUBE_API_KEY:-}
+  CLIPFORGE_META_APP_ID: ${CLIPFORGE_META_APP_ID:-}
+  CLIPFORGE_META_APP_SECRET: ${CLIPFORGE_META_APP_SECRET:-}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clipforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: clipforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/10-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipforge -d clipforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *backend-image
+    restart: "no"
+    command: ["clipforge", "migrate"]
+    environment:
+      <<: [*common-env, *secret-env]
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    <<: *backend-image
+    command: ["clipforge", "api", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: [*common-env, *secret-env]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health/ready"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  # Orchestration, publishing, analytics, backups and live-stream ingest. Holds the key.
+  worker:
+    <<: *backend-image
+    command: ["clipforge", "worker", "--queues", "default"]
+    environment:
+      <<: [*common-env, *secret-env]
+      CLIPFORGE_LIVE_SRT_PORT: "9000"
+      CLIPFORGE_LIVE_SRT_PORT_COUNT: "4"
+    ports:
+      - "${CLIPFORGE_LIVE_PORTS:-9000-9003}:9000-9003/udp"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  # Decoding, transcription, analysis and rendering of untrusted media. No secrets.
+  media-worker:
+    <<: *backend-image
+    command: ["clipforge", "worker", "--queues", "media"]
+    environment:
+      <<: *common-env
+      CLIPFORGE_DISABLE_DEV_KEY: "1"
+    deploy:
+      replicas: ${CLIPFORGE_MEDIA_WORKERS:-1}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    image: clipforge-web:${CLIPFORGE_VERSION:-local}
+    build:
+      context: .
+      dockerfile: deploy/docker/frontend.Dockerfile
+      args:
+        CLIPFORGE_API_URL: http://api:8000
+      secrets: [extra_ca]
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      CLIPFORGE_SITE_ADDRESS: ${CLIPFORGE_SITE_ADDRESS:-:80}
+    ports:
+      - "${CLIPFORGE_HTTP_PORT:-3000}:80"
+      - "${CLIPFORGE_HTTPS_PORT:-3443}:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+      - api
+
+  # Optional local language model server: docker compose --profile local-ai up -d
+  # then add it in AI Connections as "Ollama (local)" with URL http://ollama:11434/v1
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    profiles: ["local-ai"]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+
+# CA of a TLS-inspecting proxy, used only while building images (see scripts/install.sh --build-ca).
+secrets:
+  extra_ca:
+    file: ${CLIPFORGE_BUILD_CA_FILE:-./deploy/docker/no-extra-ca.pem}
+
+volumes:
+  pgdata:
+  clipforge-data:
+  caddy-data:
+  caddy-config:
+  ollama-data:

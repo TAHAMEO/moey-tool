@@ -81,6 +81,27 @@ def _child(ctx):
     return {"value": ctx.payload["n"] * 2}
 
 
+def node_glitch(state: WFState, config) -> WFState:
+    if "glitch" in FAIL_ONCE:
+        FAIL_ONCE.discard("glitch")
+        raise RetryableError("network blip after several stages")
+    return {"log": ["glitch"]}
+
+
+@handler("test.long_workflow")
+def _long_wf(ctx):
+    g = StateGraph(WFState)
+    g.add_node("delegate", node_delegate)
+    g.add_node("approve", node_approve)
+    g.add_node("glitch", node_glitch)
+    g.add_edge(START, "delegate")
+    g.add_edge("delegate", "approve")
+    g.add_edge("approve", "glitch")
+    g.add_edge("glitch", END)
+    values = run_graph_job(ctx, g.compile(checkpointer=get_checkpointer()), {"log": []})
+    return {"log": values["log"]}
+
+
 def _drain(seconds: float = 4.0) -> None:
     Worker(["default", "media"], worker_id="test-worker").run(idle_exit_s=seconds)
 
@@ -205,3 +226,26 @@ def test_pause_and_unpause_queued_job():
         queue.unpause(db, job_id)
     _drain(2)
     assert _job(job_id).status == "completed"
+
+
+def test_resumes_do_not_consume_retry_budget():
+    """Regression: each resume after waiting used to count as an attempt, so a transient
+    failure late in a long workflow failed immediately instead of being retried."""
+    FAIL_ONCE.clear()
+    FAIL_ONCE.add("glitch")
+    with session_scope() as db:
+        job_id = queue.enqueue(db, "test.long_workflow", {}, max_attempts=3).id
+    _drain()  # runs children, suspends for approval
+    assert _job(job_id).status == "waiting"
+    with session_scope() as db:
+        queue.resume_with(db, job_id, {"approved": True})
+    _drain()  # third run: the glitch must be retried, not fatal
+    job = _job(job_id)
+    assert job.status == "queued" and job.status_label == "Retrying", (job.status, job.error)
+    with session_scope() as db:
+        db.get(Job, job_id).run_after = utcnow()
+    _drain()
+    job = _job(job_id)
+    assert job.status == "completed", job.error
+    assert job.result["log"] == ["delegate", "approve", "glitch"]
+    assert job.attempts == 2  # one real failure + the successful retry

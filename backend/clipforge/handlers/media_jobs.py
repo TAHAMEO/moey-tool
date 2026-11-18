@@ -321,8 +321,18 @@ def render_job(ctx: JobContext) -> dict:
         base_key = f"projects/{project_id}/clips/{clip_id}"
         video_key = f"{base_key}/{slug}.mp4"
         out_path = _writable(video_key)
+        # Thumbnail moment: best frame inside the clip, mapped onto the edited timeline.
+        best_src_t = thumbnails.best_frame_time(paths["mezzanine"], start, end, scene_cuts=scene_cuts) if paths["has_video"] else start
+        out_t = 0.0
+        offset = 0.0
+        for a, b in plan.keep:
+            if a <= best_src_t <= b:
+                out_t = offset + (best_src_t - a)
+                break
+            offset += b - a
         decisions = render.render(paths["mezzanine"], plan, words, out_path, work, has_video=paths["has_video"],
-                                  has_audio=True, cancelled=ctx.cancelled)
+                                  has_audio=True, cancelled=ctx.cancelled,
+                                  still_at=out_t, still_path=work / f"{slug}_frame.jpg")
         qc = render.quality_check(out_path, expected_duration=plan.output_duration, aspect=aspect,
                                   loudness_target=plan.loudness_lufs)
         _commit(video_key, out_path)
@@ -333,19 +343,13 @@ def render_job(ctx: JobContext) -> dict:
         srt_key, vtt_key = f"{base_key}/{slug}.srt", f"{base_key}/{slug}.vtt"
         _commit(srt_key, srt_path)
         _commit(vtt_key, vtt_path)
-        # Thumbnail / cover: best moment inside the clip, mapped onto the edit.
-        best_src_t = thumbnails.best_frame_time(paths["mezzanine"], start, end, scene_cuts=scene_cuts) if paths["has_video"] else start
-        out_t = 0.0
-        offset = 0.0
-        for a, b in plan.keep:
-            if a <= best_src_t <= b:
-                out_t = offset + (best_src_t - a)
-                break
-            offset += b - a
-        frame = thumbnails.extract_frame(out_path, out_t, work / f"{slug}_frame.jpg")
+        # Cover: the clean (caption-free) still written by the render pass, so the
+        # hook text is never stacked on top of burned-in captions.
+        frame = Path(decisions["still"]) if decisions.get("still") else \
+            thumbnails.extract_frame(out_path, out_t, work / f"{slug}_frame.jpg")
         size = (1080, 1920) if aspect == "9:16" else (1080, 1080) if aspect == "1:1" else (1280, 720)
         thumb_key = f"{base_key}/{slug}_thumb.jpg"
-        thumb_path = thumbnails.compose(frame, _writable(thumb_key), size=size, text=options.get("thumbnail_text") or hook[:60],
+        thumb_path = thumbnails.compose(frame, _writable(thumb_key), size=size, text=options.get("thumbnail_text") or hook,
                                         accent=brand.accent_color)
         _commit(thumb_key, thumb_path)
         landscape_key = None
@@ -353,7 +357,7 @@ def render_job(ctx: JobContext) -> dict:
             src_frame = thumbnails.extract_frame(paths["mezzanine"], best_src_t, work / f"{slug}_src.jpg")
             landscape_key = f"{base_key}/{slug}_yt_thumb.jpg"
             thumbnails.compose(src_frame, _writable(landscape_key), size=(1280, 720),
-                               text=options.get("thumbnail_text") or hook[:60], accent=brand.accent_color)
+                               text=options.get("thumbnail_text") or hook, accent=brand.accent_color)
             _commit(landscape_key, _local(landscape_key))
         with session_scope() as db:
             video_asset = _asset(db, kind="clip", key=video_key, project_id=project_id, mime="video/mp4", path=out_path,
@@ -371,7 +375,7 @@ def render_job(ctx: JobContext) -> dict:
             render_row = Render(clip_id=clip_id, aspect=aspect, status="done", video_asset_id=video_asset.id,
                                 srt_asset_id=srt_asset.id, vtt_asset_id=vtt_asset.id, thumbnail_asset_id=thumb_asset.id,
                                 captions_burned=decisions["captions_burned"],
-                                edit_decisions={k: v for k, v in decisions.items() if k != "words"} | {"words": decisions["words"]},
+                                edit_decisions={k: v for k, v in decisions.items() if k != "still"},
                                 quality_report=qc, subtitle_report=sub_report.to_dict())
             db.add(render_row)
             db.flush()

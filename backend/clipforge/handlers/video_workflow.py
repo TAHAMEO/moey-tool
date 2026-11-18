@@ -93,8 +93,9 @@ def resolve_node(state: VideoState, config) -> VideoState:
         acq.mark_resolved(source, result)
         if result.metadata.get("title"):
             project = db.get(Project, uuid.UUID(state["project_id"]))
-            if project.title.startswith(("Youtube ", "Instagram ", "Direct ", "Gdrive ")):
+            if project.request.get("placeholder_title"):
                 project.title = result.metadata["title"][:300]
+                project.request = {**project.request, "placeholder_title": False}
     if result.retryable and result.state == rs.SOURCE_UNAVAILABLE:
         raise RetryableError("; ".join(result.reasons) or "Source temporarily unreachable")
     job_context(config).event(f"Access: {result.state} ({result.method or 'no media method'})", stage="resolve",

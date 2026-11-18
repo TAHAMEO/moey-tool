@@ -1,0 +1,7 @@
+# Optional high-accuracy transcription engine, installed in its OWN virtual environment
+# (PyTorch + pyannote never enter the CLIPFORGE API/worker environment).
+#   python3.12 -m venv workers/whisperx/.venv
+#   workers/whisperx/.venv/bin/pip install -r workers/whisperx/requirements.lock
+#   export CLIPFORGE_WHISPERX_PYTHON=$PWD/workers/whisperx/.venv/bin/python
+#   $CLIPFORGE_WHISPERX_PYTHON workers/whisperx/transcribe.py --download --model small --models-dir var/models
+whisperx==3.8.6

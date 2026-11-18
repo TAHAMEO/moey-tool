@@ -28,9 +28,17 @@ class Principal:
 
 
 def client_ip(request: Request) -> str | None:
+    """Client address for throttling and audit logs.
+
+    With ``n`` trusted proxy hops the client is the n-th entry from the *right* of
+    X-Forwarded-For; entries further left were supplied by the client itself.
+    """
+    hops = request.app.state.trusted_proxy_hops
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded and request.app.state.trust_proxy:
-        return forwarded.split(",")[0].strip()[:64]
+    if forwarded and hops > 0:
+        entries = [part.strip() for part in forwarded.split(",") if part.strip()]
+        if len(entries) >= hops:
+            return entries[-hops][:64]
     return request.client.host if request.client else None
 
 

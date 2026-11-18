@@ -213,7 +213,10 @@ def _pieces(plan: EditPlan, path: CropPath) -> list[tuple[float, float, CropSegm
 
 
 def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_audio: bool, subtitle_name: str | None,
-                      watermark_index: int | None, music_index: int | None) -> tuple[str, str]:
+                      watermark_index: int | None, music_index: int | None,
+                      still_at: float | None = None) -> tuple[str, str]:
+    """Build the filter graph. With ``still_at`` a caption- and watermark-free frame of the
+    reframed edit is also exposed as ``[still]`` (used for thumbnails)."""
     out_w, out_h = RATIOS[plan.aspect]
     pieces = _pieces(plan, path)
     parts: list[str] = []
@@ -262,6 +265,11 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
             else:
                 parts.append(f"{''.join(alabels)}concat=n={len(alabels)}:v=0:a=1[acat]")
     current = "[vcat]"
+    if still_at is not None:
+        t0 = max(0.0, min(still_at, total - 0.25))
+        parts.append("[vcat]split=2[vmain][vstill]")
+        parts.append(f"[vstill]trim=start={t0:.3f}:duration=0.2,setpts=PTS-STARTPTS[still]")
+        current = "[vmain]"
     fade_out_at = max(0.0, total - plan.fade_s - 0.05)
     parts.append(f"{current}fade=t=in:st=0:d={plan.fade_s},fade=t=out:st={fade_out_at:.3f}:d={plan.fade_s}[vfade]")
     current = "[vfade]"
@@ -292,8 +300,14 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
 
 
 def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, work_dir: Path, *, has_video: bool,
-           has_audio: bool, transcript=None, crop_path: CropPath | None = None, on_progress=None, cancelled=None) -> dict:
-    """Render one clip. Returns the edit decisions actually applied."""
+           has_audio: bool, transcript=None, crop_path: CropPath | None = None, on_progress=None, cancelled=None,
+           still_at: float | None = None, still_path: Path | None = None) -> dict:
+    """Render one clip. Returns the edit decisions actually applied.
+
+    ``still_at``/``still_path`` additionally write one clean frame (no captions or
+    watermark) at that output time, from the same FFmpeg pass.
+    """
+    want_still = still_at is not None and still_path is not None
     out_w, out_h = RATIOS[plan.aspect]
     workspace = work_dir / out_path.stem
     workspace.mkdir(parents=True, exist_ok=True)
@@ -317,7 +331,7 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
         music_index = next_index
     graph, audio_label = build_filtergraph(plan, path, has_video=has_video, has_audio=has_audio,
                                            subtitle_name=subtitle_name, watermark_index=watermark_index,
-                                           music_index=music_index)
+                                           music_index=music_index, still_at=still_at if want_still else None)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     args = [*inputs, "-filter_complex", graph, "-map", "[vout]"]
     if audio_label:
@@ -325,6 +339,9 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
     args += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-profile:v", "high", "-pix_fmt", "yuv420p",
              "-r", str(FPS), "-g", str(FPS * 2), "-movflags", "+faststart", "-t", f"{plan.output_duration + 0.05:.3f}",
              str(out_path)]
+    if want_still:
+        still_path.parent.mkdir(parents=True, exist_ok=True)
+        args += ["-map", "[still]", "-frames:v", "1", "-q:v", "2", "-update", "1", str(still_path)]
     ffmpeg_tools.run(args, duration_s=plan.output_duration, on_progress=on_progress, cancelled=cancelled, cwd=cwd)
     if cwd is not None:
         shutil.rmtree(cwd, ignore_errors=True)
@@ -337,6 +354,7 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
         "crop_strategies": sorted({str(s.strategy) for s in path.segments}),
         "crop_segments": len(path.segments),
         "captions_burned": bool(subtitle_name),
+        "still": str(still_path) if want_still and still_path.exists() else None,
         "caption_style": plan.caption_style,
         "music": bool(music_index is not None),
         "watermark": bool(watermark_index is not None),
