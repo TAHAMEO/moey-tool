@@ -28,6 +28,7 @@ dependencies = [
     "langgraph-checkpoint-postgres==3.2.1",
     "langchain-core==1.8.2",
     "mem0ai==2.2.1",
+    "langchain==1.5.0",
     # --- Video pipeline ---
     "scenedetect==0.7.3",
     "opencv-contrib-python-headless==5.1.0.95",

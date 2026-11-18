@@ -120,6 +120,9 @@ def _cache_key(task: TaskSpec, messages: list[ChatMessage], schema: dict | None)
         "t": round(task.temperature, 2),
         "mt": task.max_tokens,
         "schema": schema,
+        # A request for an independent opinion must never be answered from the
+        # cache entry of the provider it is trying to get away from.
+        "exclude": sorted(str(c) for c in task.exclude_connections),
         "messages": [
             {
                 "r": m.role,
@@ -278,8 +281,10 @@ class ModelHub:
                     db.add(AIUsage(provider_type=data.get("provider_type", "cache"), model=data.get("model", ""),
                                    task=task.name, cached=True, success=True, job_id=task.job_id,
                                    project_id=task.project_id))
+                    cached_conn = data.get("connection_id")
                     return HubResult(text=data["text"], provider_type=data.get("provider_type", ""),
-                                     connection_id=None, connection_name=data.get("connection_name", "cache"),
+                                     connection_id=uuid.UUID(cached_conn) if cached_conn else None,
+                                     connection_name=data.get("connection_name", "cache"),
                                      model=data.get("model", ""), cached=True)
 
         with session_scope() as db:
@@ -401,7 +406,8 @@ class ModelHub:
         with session_scope() as db:
             entry = db.get(LLMCache, key)
             payload = {"text": res.text, "provider_type": res.provider_type, "model": res.model,
-                       "connection_name": res.connection_name}
+                       "connection_name": res.connection_name,
+                       "connection_id": str(res.connection_id) if res.connection_id else None}
             expires = utcnow() + timedelta(seconds=task.cache_ttl_s or 0)
             if entry is None:
                 db.add(LLMCache(key=key, task=task.name, response=payload, expires_at=expires))

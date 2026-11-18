@@ -93,14 +93,15 @@ def publish(channel: str, message: str) -> None:
             pass
 
 
-def wait_signal(channel: str, timeout_s: float) -> bool:
-    """Block until a wake-up signal arrives (or timeout). False if Redis is down."""
+def wait_signal(channels: str | list[str], timeout_s: float) -> bool:
+    """Block until a wake-up signal arrives on any channel (or timeout). False if Redis is down."""
     client = get_redis()
     if client is None:
         time.sleep(min(timeout_s, 2.0))
         return False
+    keys = [f"{c}:signal" for c in ([channels] if isinstance(channels, str) else channels)]
     try:
-        result = client.blpop([f"{channel}:signal"], timeout=max(1, int(timeout_s)))
+        result = client.blpop(keys, timeout=max(1, int(timeout_s)))
         return result is not None
     except redis.RedisError:
         time.sleep(min(timeout_s, 2.0))
