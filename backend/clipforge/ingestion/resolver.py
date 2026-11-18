@@ -432,6 +432,34 @@ def _resolve_direct(db: Session, source: Source) -> AccessResult:
     return res
 
 
+def _resolve_live_ingest(db: Session, source: Source) -> AccessResult:
+    res = AccessResult(state=SOURCE_UNAVAILABLE, platform="live_ingest", source_type="stream")
+    session = db.execute(select(LiveSession).where(LiveSession.source_id == source.id)
+                         .order_by(LiveSession.created_at.desc())).scalars().first()
+    if session is None:
+        res.reasons.append("No live ingest session exists for this stream.")
+        res.alternatives.append(ALT["live_ingest"])
+        return res
+    res.live_status = {"live": "live", "reconnecting": "live", "waiting": "scheduled"}.get(session.status, "ended")
+    if session.status in ("live", "reconnecting"):
+        res.state, res.method = AUTHORIZED_LIVE_FEED, "live_ingest"
+        res.capabilities.update(media=True, live=True)
+        res.acquire = {"live_session_id": str(session.id)}
+        res.reasons.append("Your encoder is connected to CLIPFORGE's authenticated SRT ingest.")
+    elif session.status == "waiting":
+        # Not a live feed until the encoder actually connects.
+        res.acquire = {"await_live": True}
+        res.reasons.append("Waiting for your encoder to connect to the CLIPFORGE live ingest.")
+    elif source.media_asset_id:
+        res.state, res.method = REPLAY_ACCESSIBLE, "upload"
+        res.capabilities.update(media=True)
+        res.acquire = {"asset_id": str(source.media_asset_id)}
+        res.reasons.append("The stream has ended; its recording is available.")
+    else:
+        res.reasons.append("The stream ended before anything was recorded.")
+    return res
+
+
 def resolve(db: Session, source: Source) -> AccessResult:
     if source.platform == "upload":
         res = AccessResult(state=FULL_MEDIA_ACCESS, platform="upload", source_type="file", method="upload",
@@ -440,7 +468,7 @@ def resolve(db: Session, source: Source) -> AccessResult:
         res.acquire = {"asset_id": str(source.media_asset_id)}
         return res
     resolver = {"youtube": _resolve_youtube, "instagram": _resolve_instagram, "gdrive": _resolve_drive,
-                "direct": _resolve_direct}.get(source.platform)
+                "direct": _resolve_direct, "live_ingest": _resolve_live_ingest}.get(source.platform)
     if resolver is None:
         return AccessResult(state=UNSUPPORTED_SOURCE, platform=source.platform, source_type=source.source_type,
                             reasons=["This kind of link isn't supported."])

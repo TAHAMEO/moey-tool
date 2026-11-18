@@ -67,10 +67,13 @@ class Settings(BaseSettings):
     vosk_model_path: Path | None = None
     whisperx_python: Path | None = None  # interpreter of the isolated WhisperX venv
     faster_whisper_model: str = "small"
-    live_rtmp_port: int = 1935
+    live_srt_port: int = 9000
+    live_srt_port_count: int = 4
     live_bind_host: str = "0.0.0.0"
     live_public_host: str = "localhost"
     live_segment_seconds: int = 10
+    live_reconnect_grace_s: float = 120.0
+    live_max_session_hours: float = 12.0
 
     # --- Storage --------------------------------------------------------------------
     storage_backend: Literal["local", "s3"] = "local"

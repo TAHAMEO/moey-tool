@@ -62,11 +62,14 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 def seed_schedules() -> None:
+    """Idempotent and race-free: several workers may start at the same moment."""
+    from sqlalchemy.dialects.postgresql import insert
+
     with session_scope() as db:
         for name, job_type, interval in DEFAULT_SCHEDULES:
-            if db.get(Schedule, name) is None:
-                db.add(Schedule(name=name, job_type=job_type, interval_seconds=interval,
-                                next_run_at=utcnow() + timedelta(seconds=60)))
+            db.execute(insert(Schedule).values(name=name, job_type=job_type, interval_seconds=interval, payload={},
+                                               enabled=True, next_run_at=utcnow() + timedelta(seconds=60))
+                       .on_conflict_do_nothing(index_elements=["name"]))
 
 
 def run_due_schedules() -> int:

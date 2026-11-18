@@ -706,8 +706,10 @@ class LiveSession(Base):
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"))
     source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id", ondelete="SET NULL"))
-    ingest_protocol: Mapped[str] = mapped_column(String(10), default="rtmp")
+    ingest_protocol: Mapped[str] = mapped_column(String(10), default="srt")
     stream_key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    secret_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("secrets.id", ondelete="SET NULL"))
+    port: Mapped[int | None] = mapped_column(Integer)
     stream_key_hint: Mapped[str] = mapped_column(String(12), default="")
     status: Mapped[str] = mapped_column(String(20), default="waiting")  # waiting|live|reconnecting|ended|failed|stopped
     retention_minutes: Mapped[int] = mapped_column(Integer, default=120)
