@@ -16,7 +16,6 @@ checkpointed in PostgreSQL): understand -> recall -> act -> respond.
 from __future__ import annotations
 
 import logging
-import operator
 import uuid
 from typing import Annotated, Any, Literal, TypedDict
 
@@ -67,8 +66,10 @@ class ChatState(TypedDict, total=False):
     memories: list[dict]
     context: dict
     plan: list[str]
-    actions: Annotated[list[dict], operator.add]
-    cards: Annotated[list[dict], operator.add]
+    # Per-turn outputs: replaced every turn (an append reducer on a persistent
+    # conversation thread would re-surface earlier turns' cards).
+    actions: list[dict]
+    cards: list[dict]
     facts: dict
     reply: str
     turns: Annotated[list[dict], _keep_recent]
@@ -212,7 +213,14 @@ def _act_process(state: ChatState) -> ChatState:
                                     external_id=info["external_id"], owner_user_id=user_id)
                     db.add(source)
                     db.flush()
-                title = f"{info['platform'].title()} {info['source_type']} {info['external_id'][:11]}"
+                if info["platform"] == "direct":
+                    from pathlib import PurePosixPath
+                    from urllib.parse import unquote, urlsplit
+
+                    stem = PurePosixPath(unquote(urlsplit(info["normalized_url"]).path)).stem.replace("_", " ").replace("-", " ")
+                    title = stem.strip().title()[:120] or "Linked video"
+                else:
+                    title = f"{info['platform'].title()} {info['source_type']} {info['external_id'][:11]}"
             else:
                 from ..db.models import MediaAsset
 

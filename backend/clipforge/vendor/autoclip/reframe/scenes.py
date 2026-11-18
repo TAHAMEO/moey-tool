@@ -81,8 +81,8 @@ def _detect_with_scenedetect(
     for scene_start, scene_end in scenes:
         # Rebase onto the clip's own timeline so downstream code never has to
         # care where the clip sat in the source.
-        relative_start = max(0.0, scene_start.get_seconds() - start_s)
-        relative_end = scene_end.get_seconds() - start_s
+        relative_start = max(0.0, scene_start.seconds - start_s)  # CLIPFORGE: .seconds (get_seconds deprecated)
+        relative_end = scene_end.seconds - start_s
         if end_s is not None:
             relative_end = min(relative_end, end_s - start_s)
         if relative_end > relative_start:

@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     instagram_api_version: str = "v24.0"
     google_api_base: str = "https://www.googleapis.com"
     google_oauth_base: str = "https://oauth2.googleapis.com"
+    youtube_oembed_url: str = "https://www.youtube.com/oembed"
+    youtube_analytics_base: str = "https://youtubeanalytics.googleapis.com/v2"
 
     # --- Misc -----------------------------------------------------------------------
     log_level: str = "INFO"

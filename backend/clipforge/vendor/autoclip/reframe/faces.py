@@ -16,6 +16,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 log = logging.getLogger(__name__)
 
 #: Frames per second to sample. Faces don't move fast enough to justify more,
@@ -112,26 +114,41 @@ def sample_faces(
 
     model_file = models.ensure("face_landmarker")
 
-    options = FaceLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(model_file)),
-        running_mode=RunningMode.VIDEO,
-        num_faces=max_faces,
-        min_face_detection_confidence=0.4,
-        min_tracking_confidence=0.4,
-    )
+    def _options():
+        return FaceLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=str(model_file)),
+            running_mode=RunningMode.VIDEO,
+            num_faces=max_faces,
+            min_face_detection_confidence=0.4,
+            min_tracking_confidence=0.4,
+        )
 
     observations: list[FaceObservation] = []
 
-    with FaceLandmarker.create_from_options(options) as landmarker:
+    # CLIPFORGE: MediaPipe's face models are trained on roughly square,
+    # selfie-scale inputs. In a wide 16:9 frame a medium-shot face shrinks
+    # below what they detect, so besides the full frame we also run one
+    # landmarker per overlapping full-height square tile and map the results
+    # back. One landmarker per tile keeps VIDEO-mode timestamps monotonic.
+    landmarkers: dict[str, object] = {}
+    try:
         for timestamp, frame, width, height in _iter_frames(cv2, video, start_s, end_s, sample_fps):
-            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-            # VIDEO mode demands monotonically increasing integer milliseconds.
-            result = landmarker.detect_for_video(image, int(timestamp * 1000))
-
-            for landmarks in result.face_landmarks or []:
-                observation = _to_observation(landmarks, timestamp, width, height)
-                if observation is not None:
-                    observations.append(observation)
+            frame_obs: list[FaceObservation] = []
+            for key, x0, y0, side_w, side_h in _tiles(width, height):
+                if key not in landmarkers:
+                    landmarkers[key] = FaceLandmarker.create_from_options(_options())
+                crop = frame if key == "full" else frame[y0:y0 + side_h, x0:x0 + side_w]
+                image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(crop))
+                # VIDEO mode demands monotonically increasing integer milliseconds.
+                result = landmarkers[key].detect_for_video(image, int(timestamp * 1000))
+                for landmarks in result.face_landmarks or []:
+                    observation = _to_observation_offset(landmarks, timestamp, side_w, side_h, x0, y0)
+                    if observation is not None:
+                        frame_obs.append(observation)
+            observations.extend(_dedupe(frame_obs))
+    finally:
+        for landmarker in landmarkers.values():
+            landmarker.close()
 
     log.info("Sampled %d face observations from %s.", len(observations), video.name)
     return observations
@@ -219,3 +236,42 @@ def _mouth_aspect_ratio(xs: list[float], ys: list[float]) -> float:
     except IndexError:
         return 0.0
     return opening / mouth_width if mouth_width > 1 else 0.0
+
+
+# --------------------------------------------------------------------------
+# CLIPFORGE additions: tiled detection helpers
+# --------------------------------------------------------------------------
+
+
+def _tiles(width: int, height: int) -> list[tuple[str, int, int, int, int]]:
+    """Full frame plus overlapping square tiles along the long axis."""
+    tiles = [("full", 0, 0, width, height)]
+    if width > height * 1.15:
+        side = height
+        span = width - side
+        for i, x0 in enumerate(sorted({0, span // 2, span})):
+            tiles.append((f"t{i}", int(x0), 0, side, side))
+    elif height > width * 1.15:
+        side = width
+        span = height - side
+        for i, y0 in enumerate(sorted({0, span // 2, span})):
+            tiles.append((f"t{i}", 0, int(y0), side, side))
+    return tiles
+
+
+def _to_observation_offset(landmarks, timestamp: float, tile_w: int, tile_h: int, x0: int, y0: int):
+    obs = _to_observation(landmarks, timestamp, tile_w, tile_h)
+    if obs is None:
+        return None
+    obs.cx += x0
+    obs.cy += y0
+    obs.eye_y += y0
+    return obs
+
+
+def _dedupe(observations: list[FaceObservation]) -> list[FaceObservation]:
+    kept: list[FaceObservation] = []
+    for obs in sorted(observations, key=lambda o: o.area, reverse=True):
+        if all(obs.iou(other) < 0.3 for other in kept):
+            kept.append(obs)
+    return kept

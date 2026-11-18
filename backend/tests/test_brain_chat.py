@@ -228,3 +228,14 @@ def test_upload_validation_and_dedupe(owner_client, tmp_path):
     conv = _conversation(owner_client)
     reply = _say(owner_client, conv, "make 2 shorts from this", attachments=[first["asset_id"]])
     assert reply["meta"]["intent"] == "process_source" and reply["meta"]["cards"]
+
+
+def test_reply_cards_are_per_turn(owner_client):
+    """Regression: per-turn cards must not accumulate across a persistent conversation."""
+    conv = _conversation(owner_client)
+    first = _say(owner_client, conv, "make clips https://youtu.be/dQw4w9WgXcQ")
+    second = _say(owner_client, conv, "make clips https://youtu.be/9bZkp7q19f0")
+    assert len(first["meta"]["cards"]) == 1 and len(second["meta"]["cards"]) == 1
+    assert first["meta"]["cards"][0]["job_id"] != second["meta"]["cards"][0]["job_id"]
+    status = _say(owner_client, conv, "what's the status?")
+    assert all(c["type"] == "job" for c in status["meta"]["cards"]) and len(status["meta"]["actions"]) == 1

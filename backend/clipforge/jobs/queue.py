@@ -401,6 +401,18 @@ def retry(db: Session, job_id: uuid.UUID) -> Job:
     job.finished_at = None
     job.error = None
     db.add(JobEvent(job_id=job.id, message="Retry requested; resuming from last checkpoint", stage="retry"))
+    # Failed/cancelled children are re-run too; completed children are kept,
+    # so a retried workflow never repeats work that already succeeded.
+    for child in db.execute(select(Job).where(Job.parent_id == job.id, Job.status.in_(("failed", "cancelled")))).scalars():
+        child.status = "queued"
+        child.status_label = "Retrying"
+        child.cancel_requested = False
+        child.max_attempts = child.attempts + 2
+        child.run_after = utcnow()
+        child.finished_at = None
+        child.error = None
+        db.add(JobEvent(job_id=child.id, message="Re-queued by parent retry", stage="retry"))
+        _signal(child.queue)
     # A failed child re-run should be able to resume its waiting parent again.
     if job.parent_id:
         parent = db.get(Job, job.parent_id)
