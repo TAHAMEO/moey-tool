@@ -39,10 +39,10 @@ if _DEV_MODELS.exists():
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import text
 
-from clipforge.config import get_settings  # noqa: E402
-from clipforge.db.base import get_engine, session_scope  # noqa: E402
+from clipforge.config import get_settings
+from clipforge.db.base import get_engine, session_scope
 
 
 def _migrate() -> None:

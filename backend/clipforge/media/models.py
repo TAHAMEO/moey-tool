@@ -106,8 +106,7 @@ def ensure(key: str) -> Path:
             with httpx.stream("GET", spec.url, timeout=120, follow_redirects=True) as response:
                 response.raise_for_status()
                 with open(tmp, "wb") as handle:
-                    for chunk in response.iter_bytes(1 << 20):
-                        handle.write(chunk)
+                    handle.writelines(response.iter_bytes(1 << 20))
         except httpx.HTTPError as exc:
             tmp.unlink(missing_ok=True)
             raise ModelUnavailable(f"Could not download {key}: {exc}") from exc

@@ -6,6 +6,7 @@ Only items whose rights the owner explicitly confirms are ever used in edits.
 from __future__ import annotations
 
 import hashlib
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -35,9 +36,10 @@ def list_items(db: Session = Depends(get_db), _: Principal = Depends(viewer)) ->
 
 
 @router.post("")
-async def add_item(request: Request, file: UploadFile = File(...), kind: str = Form(...), title: str = Form(""),
-                   license_note: str = Form(""), rights_confirmed: bool = Form(False), tags: str = Form(""),
-                   db: Session = Depends(get_db), principal: Principal = Depends(editor)) -> dict:
+def add_item(request: Request, file: UploadFile = File(...), kind: str = Form(...), title: str = Form(""),
+             license_note: str = Form(""), rights_confirmed: bool = Form(False), tags: str = Form(""),
+             db: Session = Depends(get_db), principal: Principal = Depends(editor)) -> dict:
+    # Sync on purpose: FastAPI runs it in the threadpool, keeping file I/O off the event loop.
     if kind not in KINDS:
         raise HTTPException(400, {"code": "kind", "message": "Kind must be music, sfx, broll, logo or master."})
     if not rights_confirmed:
@@ -47,27 +49,34 @@ async def add_item(request: Request, file: UploadFile = File(...), kind: str = F
     if ext not in KINDS[kind]:
         raise HTTPException(400, {"code": "type", "message": f"Accepted types for {kind}: {', '.join(sorted(KINDS[kind]))}"})
     settings = get_settings()
-    tmp = Path(tempfile.mkdtemp(dir=settings.work_dir)) / f"item{ext}"
+    tmp_dir = Path(tempfile.mkdtemp(dir=settings.work_dir, prefix="library-"))
+    tmp = tmp_dir / f"item{ext}"
     digest, size = hashlib.sha256(), 0
-    with open(tmp, "wb") as handle:
-        while chunk := await file.read(1 << 20):
-            size += len(chunk)
-            if size > 1024 * 1024 * 1024:
-                raise HTTPException(413, {"code": "too_large", "message": "Library files are limited to 1 GB."})
-            digest.update(chunk)
-            handle.write(chunk)
-    if kind == "logo":
-        if tmp.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
-            raise HTTPException(400, {"code": "type", "message": "Logos must be PNG images."})
-    elif not looks_like_media(tmp):
-        raise HTTPException(400, {"code": "type", "message": "That file doesn't look like audio or video."})
+    try:
+        with open(tmp, "wb") as handle:
+            while chunk := file.file.read(1 << 20):
+                size += len(chunk)
+                if size > 1024 * 1024 * 1024:
+                    raise HTTPException(413, {"code": "too_large", "message": "Library files are limited to 1 GB."})
+                digest.update(chunk)
+                handle.write(chunk)
+        if kind == "logo":
+            with open(tmp, "rb") as handle:
+                if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                    raise HTTPException(400, {"code": "type", "message": "Logos must be PNG images."})
+        elif not looks_like_media(tmp):
+            raise HTTPException(400, {"code": "type", "message": "That file doesn't look like audio or video."})
+    except HTTPException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
     item_id = uuid.uuid4()
     key = f"library/{kind}/{item_id}{ext}"
     get_storage().put_file(tmp, key, move=True)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
     if kind == "master":  # masters are also matched against the owner's YouTube videos
         masters = settings.library_dir / "masters"
         masters.mkdir(parents=True, exist_ok=True)
-        (masters / name).write_bytes(get_storage().local_path(key).read_bytes())
+        shutil.copyfile(get_storage().local_path(key), masters / name)  # streamed, never loaded into memory
     asset = MediaAsset(kind="library", storage_key=key, mime=file.content_type or "application/octet-stream",
                        size_bytes=size, sha256=digest.hexdigest(), info={"filename": name})
     db.add(asset)
@@ -88,6 +97,8 @@ def delete_item(item_id: uuid.UUID, request: Request, db: Session = Depends(get_
         raise HTTPException(404, {"code": "not_found", "message": "Item not found."})
     asset = db.get(MediaAsset, item.asset_id) if item.asset_id else None
     if asset is not None:
+        if item.kind == "master" and (filename := (asset.info or {}).get("filename")):
+            (get_settings().library_dir / "masters" / Path(filename).name).unlink(missing_ok=True)
         get_storage().delete(asset.storage_key)
         db.delete(asset)
     db.delete(item)

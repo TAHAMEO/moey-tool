@@ -106,7 +106,7 @@ def build_cues(words: list[dict], *, max_chars: int = MAX_LINE_CHARS * MAX_LINES
 
 
 def _ts(seconds: float, sep: str) -> str:
-    ms = int(round(max(0.0, seconds) * 1000))
+    ms = round(max(0.0, seconds) * 1000)
     h, ms = divmod(ms, 3_600_000)
     m, ms = divmod(ms, 60_000)
     s, ms = divmod(ms, 1000)
@@ -152,7 +152,7 @@ def _spell(language: str):
         from spellchecker import SpellChecker
 
         return SpellChecker(language=language)
-    except Exception:
+    except (ImportError, ValueError, OSError):  # unsupported language or missing dictionary
         return None
 
 

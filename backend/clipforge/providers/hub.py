@@ -138,7 +138,7 @@ def _cache_key(task: TaskSpec, messages: list[ChatMessage], schema: dict | None)
 def extract_json(text: str) -> Any:
     """Parse the first JSON object/array in model output (tolerates code fences)."""
     text = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()
     try:
@@ -481,7 +481,7 @@ def test_connection(db: Session, conn: ProviderConnection, *, probe_model: str |
             sync_models(db, conn, [(m, None, {}) for m in suggested])
     db.refresh(conn)
     chat_models = [m for m in conn.models if m.enabled and m.capabilities.get("chat", True)]
-    model_id = probe_model or (sorted(chat_models, key=lambda m: (m.quality_tier, m.model_id))[0].model_id if chat_models else None)
+    model_id = probe_model or (min(chat_models, key=lambda m: (m.quality_tier, m.model_id)).model_id if chat_models else None)
     if model_id is None:
         report["error"] = report.get("discovery_error") or "No chat-capable models found on this connection"
         conn.status = "error"

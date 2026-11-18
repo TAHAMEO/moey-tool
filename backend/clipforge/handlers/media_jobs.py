@@ -18,7 +18,17 @@ from sqlalchemy import select
 
 from ..config import get_settings
 from ..db.base import session_scope
-from ..db.models import Analysis, Clip, LibraryItem, MediaAsset, Project, Render, Source, Transcript, TranscriptChunk
+from ..db.models import (
+    Analysis,
+    Clip,
+    LibraryItem,
+    MediaAsset,
+    Project,
+    Render,
+    Source,
+    Transcript,
+    TranscriptChunk,
+)
 from ..ingestion import acquire as acq
 from ..jobs.registry import JobContext, PermanentError, RetryableError, handler
 from ..media import analysis, ffmpeg_tools, render, subtitles, thumbnails, transcription
@@ -228,7 +238,7 @@ def analyze_job(ctx: JobContext) -> dict:
         ctx.progress(n / len(steps), label="Analyzing", stage="analyze", message=f"Analyzing {kind.replace('_', ' ')}")
         try:
             data = fn()
-        except Exception as exc:  # one failed analysis must not sink the project
+        except Exception as exc:  # noqa: BLE001 - one failed analysis must not sink the project
             log.warning("Analysis %s failed: %s", kind, exc)
             data = {"error": str(exc)[:300]}
         with session_scope() as db:
@@ -269,7 +279,7 @@ def render_job(ctx: JobContext) -> dict:
         project = db.get(Project, clip.project_id)
         source_id = clip.source_id
         project_id = project.id
-        start, end, rank, title, hook = clip.start_s, clip.end_s, clip.rank, clip.title, clip.hook
+        start, end, rank, hook = clip.start_s, clip.end_s, clip.rank, clip.hook
         clips_cfg = app_settings.get_section(db, "clips")
         brand = app_settings.get_section(db, "brand")
         aspects = project.request.get("aspects") or clips_cfg.aspects

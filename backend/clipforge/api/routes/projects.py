@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,6 +26,8 @@ from ...jobs import queue
 from ...security.audit import audit
 from ...storage import get_storage
 from ..deps import Principal, client_ip, editor, viewer
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["projects"])
 
@@ -188,8 +191,8 @@ def delete_project(project_id: uuid.UUID, request: Request, db: Session = Depend
     for asset in db.execute(select(MediaAsset).where(MediaAsset.project_id == project_id)).scalars():
         try:
             storage.delete(asset.storage_key)
-        except Exception:
-            pass
+        except OSError as exc:  # leftover files are removed by the retention clean-up
+            log.warning("Could not delete %s: %s", asset.storage_key, exc)
     db.delete(project)
     audit(db, "project.delete", user_id=principal.id, target_type="project", target_id=project_id, ip=client_ip(request))
     return {"ok": True}

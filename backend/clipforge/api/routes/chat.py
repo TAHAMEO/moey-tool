@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -92,9 +93,13 @@ def send_message(conversation_id: uuid.UUID, body: NewMessage, db: Session = Dep
 
 
 @router.post("/upload")
-async def upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db),
-                 principal: Principal = Depends(editor)) -> dict:
-    """Optional fallback input: upload a media file you have rights to."""
+def upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db),
+           principal: Principal = Depends(editor)) -> dict:
+    """Optional fallback input: upload a media file you have rights to.
+
+    A plain (sync) endpoint on purpose: FastAPI runs it in its threadpool, so
+    copying a multi-gigabyte file never blocks the event loop.
+    """
     settings = get_settings()
     name = Path(file.filename or "upload").name[:200]
     ext = Path(name).suffix.lower()
@@ -105,26 +110,27 @@ async def upload(request: Request, file: UploadFile = File(...), db: Session = D
     size = 0
     tmp_dir = Path(tempfile.mkdtemp(dir=settings.work_dir, prefix="upload-"))
     tmp = tmp_dir / f"incoming{ext}"
-    with open(tmp, "wb") as handle:
-        while chunk := await file.read(1 << 20):
-            size += len(chunk)
-            if size > limit:
-                handle.close()
-                tmp.unlink(missing_ok=True)
-                raise HTTPException(413, {"code": "too_large", "message": f"Files up to {settings.max_upload_mb} MB are accepted."})
-            digest.update(chunk)
-            handle.write(chunk)
-    if size == 0 or not looks_like_media(tmp):
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(400, {"code": "not_media", "message": "That file doesn't look like a video or audio file."})
+    try:
+        with open(tmp, "wb") as handle:
+            while chunk := file.file.read(1 << 20):
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(413, {"code": "too_large", "message": f"Files up to {settings.max_upload_mb} MB are accepted."})
+                digest.update(chunk)
+                handle.write(chunk)
+        if size == 0 or not looks_like_media(tmp):
+            raise HTTPException(400, {"code": "not_media", "message": "That file doesn't look like a video or audio file."})
+    except HTTPException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
     sha = digest.hexdigest()
     existing = db.execute(select(MediaAsset).where(MediaAsset.sha256 == sha, MediaAsset.kind == "upload")).scalars().first()
     if existing is not None:
-        tmp.unlink(missing_ok=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return {"asset_id": str(existing.id), "filename": existing.info.get("filename"), "size": existing.size_bytes, "duplicate": True}
     key = f"uploads/{sha[:2]}/{sha}{ext}"
     stored = get_storage().put_file(tmp, key, move=True)
-    tmp_dir.rmdir()
+    shutil.rmtree(tmp_dir, ignore_errors=True)
     asset = MediaAsset(kind="upload", storage_key=key, mime=file.content_type or "application/octet-stream",
                        size_bytes=stored, sha256=sha, info={"filename": name, "validated": False})
     db.add(asset)

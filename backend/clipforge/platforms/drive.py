@@ -49,19 +49,21 @@ def download(token: str, file_id: str, dest: Path, *, max_bytes: int) -> dict:
     tmp = dest.with_suffix(dest.suffix + ".part")
     digest = hashlib.sha256()
     size = 0
-    with httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0), follow_redirects=True) as client:
-        with client.stream("GET", f"{_api()}/files/{file_id}", params={"alt": "media", "supportsAllDrives": "true"},
-                           headers={"Authorization": f"Bearer {token}"}) as response:
-            if response.status_code != 200:
-                response.read()
-                raise google_error(response)
-            with open(tmp, "wb") as handle:
-                for chunk in response.iter_bytes(1 << 20):
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise PlatformError("google_drive", "File exceeds the configured download limit", reason="too_large")
-                    digest.update(chunk)
-                    handle.write(chunk)
+    with (
+        httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0), follow_redirects=True) as client,
+        client.stream("GET", f"{_api()}/files/{file_id}", params={"alt": "media", "supportsAllDrives": "true"},
+                      headers={"Authorization": f"Bearer {token}"}) as response,
+    ):
+        if response.status_code != 200:
+            response.read()
+            raise google_error(response)
+        with open(tmp, "wb") as handle:
+            for chunk in response.iter_bytes(1 << 20):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise PlatformError("google_drive", "File exceeds the configured download limit", reason="too_large")
+                digest.update(chunk)
+                handle.write(chunk)
     tmp.replace(dest)
     return {"size": size, "sha256": digest.hexdigest()}
 

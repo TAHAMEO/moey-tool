@@ -179,7 +179,7 @@ def ask(question: str, *, project_id: uuid.UUID | None = None, important: bool =
 
         get_memory().remember(f"Q: {question}\nA: {best_answer.answer[:600]}", agent=True, category="knowledge",
                               metadata={"knowledge_id": str(item_id), "verification": status}, infer=False)
-    except Exception as exc:  # memory index is an accelerator; the row is authoritative
+    except Exception as exc:  # noqa: BLE001 - memory index is an accelerator; the row is authoritative
         log.warning("Could not index knowledge item in memory: %s", exc)
     return KnowledgeResult(item_id, best_answer.answer, confidence, status, [n for n, _ in answers],
                            disagreements=disagreements, cost_usd=cost)

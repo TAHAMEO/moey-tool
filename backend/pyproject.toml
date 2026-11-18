@@ -87,3 +87,12 @@ markers = [
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are evaluated once by design.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Body", "fastapi.File", "fastapi.Form",
+                          "fastapi.Header", "fastapi.Path"]
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored third-party code (AutoClip, MIT) is kept close to upstream to ease re-syncing.
+"clipforge/vendor/**" = ["BLE001", "RUF059", "I001", "FURB167", "SIM115", "PLW1510"]

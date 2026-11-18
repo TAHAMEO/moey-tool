@@ -45,7 +45,7 @@ def cleanup(ctx: JobContext) -> dict:
                 continue
             try:
                 get_storage().delete(asset.storage_key)
-            except Exception as exc:  # pragma: no cover - logged, retried next run
+            except Exception as exc:  # noqa: BLE001 - pragma: no cover - logged, retried next run
                 log.warning("Could not delete %s: %s", asset.storage_key, exc)
                 continue
             asset.info = {**(asset.info or {}), "deleted": True, "deleted_at": utcnow().isoformat()}
@@ -83,21 +83,22 @@ def publish_scheduled(ctx: JobContext) -> dict:
 def run_backup(label: str = "scheduled") -> dict:
     """pg_dump (custom format) + memory export, keeping the newest 14 backups."""
     settings = get_settings()
-    stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
+    now = utcnow()
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
     target = settings.backups_dir / f"{stamp}-{label}"
     target.mkdir(parents=True, exist_ok=True)
     dump = target / "database.dump"
     proc = subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--file", str(dump), settings.psycopg_dsn],
-                          capture_output=True, text=True, timeout=3600)
+                          check=False, capture_output=True, text=True, timeout=3600)
     if proc.returncode != 0:
         raise RuntimeError(f"pg_dump failed: {proc.stderr[-500:]}")
-    manifest = {"created_at": stamp, "database": dump.name, "size": dump.stat().st_size, "label": label}
+    manifest = {"created_at": now.isoformat(), "database": dump.name, "size": dump.stat().st_size, "label": label}
     try:
         from ..memory.service import get_memory
 
         (target / "memory-export.json").write_text(json.dumps(get_memory().export(), default=str))
         manifest["memory_export"] = "memory-export.json"
-    except Exception as exc:  # the database dump already contains the vectors
+    except Exception as exc:  # noqa: BLE001 - the database dump already contains the vectors
         manifest["memory_export_error"] = str(exc)[:200]
     history = settings.data_dir / "mem0" / "history.db"
     if history.exists():

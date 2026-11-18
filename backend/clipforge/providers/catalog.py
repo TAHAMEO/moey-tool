@@ -45,11 +45,11 @@ _REFERENCE_PRICES: list[tuple[str, float, float]] = [
     (r"^claude-opus-4(-0|-1)", 15.00, 75.00),
 ]
 
-_FAST = re.compile(r"(nano|mini|haiku|flash|lite|small|tiny|0\.5b|1\.5b|\b1b\b|\b3b\b|smollm|phi|gemma-?[23]?-?[12]b|360m|135m)", re.I)
-_BEST = re.compile(r"(opus|gpt-5(?!.*(mini|nano))|\bo3\b(?!-mini)|gemini-[\d.]+-pro|sonnet|gpt-4\.1(?!-(mini|nano))|gpt-4o(?!-mini)|70b|72b|405b|deepseek-(v3|r1|reasoner)|mistral-large|qwen.*(32b|72b))", re.I)
-_VISION = re.compile(r"(gpt-4o|gpt-4\.1|gpt-5|gemini|claude-(3|haiku|sonnet|opus)|llava|vision|-vl|gemma-?3|pixtral|llama-?3\.2-(11|90)b|qwen.*vl)", re.I)
-_EMBED = re.compile(r"(embed|embedding|bge|e5-|nomic|minilm)", re.I)
-_NON_CHAT = re.compile(r"(whisper|tts|dall-e|image|imagen|veo|moderation|audio|realtime|transcribe|search|computer-use|aqa)", re.I)
+_FAST = re.compile(r"(nano|mini|haiku|flash|lite|small|tiny|0\.5b|1\.5b|\b1b\b|\b3b\b|smollm|phi|gemma-?[23]?-?[12]b|360m|135m)", re.IGNORECASE)
+_BEST = re.compile(r"(opus|gpt-5(?!.*(mini|nano))|\bo3\b(?!-mini)|gemini-[\d.]+-pro|sonnet|gpt-4\.1(?!-(mini|nano))|gpt-4o(?!-mini)|70b|72b|405b|deepseek-(v3|r1|reasoner)|mistral-large|qwen.*(32b|72b))", re.IGNORECASE)
+_VISION = re.compile(r"(gpt-4o|gpt-4\.1|gpt-5|gemini|claude-(3|haiku|sonnet|opus)|llava|vision|-vl|gemma-?3|pixtral|llama-?3\.2-(11|90)b|qwen.*vl)", re.IGNORECASE)
+_EMBED = re.compile(r"(embed|embedding|bge|e5-|nomic|minilm)", re.IGNORECASE)
+_NON_CHAT = re.compile(r"(whisper|tts|dall-e|image|imagen|veo|moderation|audio|realtime|transcribe|search|computer-use|aqa)", re.IGNORECASE)
 
 
 @dataclass

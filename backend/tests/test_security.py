@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import ClassVar
 
 import pytest
 
@@ -99,7 +100,7 @@ def test_ssrf_allows_public_literal():
 
 
 class _Handler(BaseHTTPRequestHandler):
-    routes: dict = {}
+    routes: ClassVar[dict] = {}
 
     def log_message(self, *a):
         pass

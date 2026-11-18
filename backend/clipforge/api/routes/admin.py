@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -30,6 +31,8 @@ from ...security.audit import audit
 from ...services import app_settings
 from ...storage import get_storage
 from ..deps import Principal, admin, client_ip, owner
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -86,7 +89,7 @@ def export_data(request: Request, db: Session = Depends(get_db), principal: Prin
         from ...memory.service import get_memory
 
         data["memory"] = get_memory().export(user_id=str(principal.id))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the export still contains everything else
         data["memory_error"] = str(exc)[:200]
     audit(db, "admin.export", user_id=principal.id, ip=client_ip(request))
     return JSONResponse(json.loads(json.dumps(data, default=str)),
@@ -99,11 +102,13 @@ def delete_all(body: DeleteAll, request: Request, db: Session = Depends(get_db),
     if body.confirm != "DELETE ALL DATA":
         raise HTTPException(400, {"code": "confirm", "message": "Type DELETE ALL DATA to confirm."})
     storage = get_storage()
+    warnings: list[str] = []
     for asset in db.execute(select(MediaAsset)).scalars():
         try:
             storage.delete(asset.storage_key)
-        except Exception:
-            pass
+        except OSError as exc:
+            log.warning("Could not delete %s: %s", asset.storage_key, exc)
+            warnings.append(f"file {asset.storage_key} could not be deleted")
     for model in (MetricSnapshot, Publication, OutputPackage, Project, Source, KnowledgeItem, LearningRecord, Conversation):
         db.execute(delete(model))
     db.execute(delete(MediaAsset))
@@ -112,7 +117,8 @@ def delete_all(body: DeleteAll, request: Request, db: Session = Depends(get_db),
 
         get_memory().delete_all(user_id=str(principal.id))
         get_memory().delete_all(agent=True)
-    except Exception:
-        pass
-    audit(db, "admin.delete_all_data", user_id=principal.id, ip=client_ip(request))
-    return {"ok": True}
+    except Exception as exc:  # noqa: BLE001 - reported to the owner below, never hidden
+        log.error("Memory deletion failed: %s", exc)
+        warnings.append(f"memory could not be deleted ({exc.__class__.__name__}); try again")
+    audit(db, "admin.delete_all_data", user_id=principal.id, details={"warnings": warnings}, ip=client_ip(request))
+    return {"ok": not warnings, "warnings": warnings}

@@ -76,7 +76,8 @@ def create_app() -> FastAPI:
             status_code=500,
         )
 
-    from .routes import auth, health, providers, settings as settings_routes
+    from .routes import auth, health, providers
+    from .routes import settings as settings_routes
 
     for module in (health, auth, providers, settings_routes):
         app.include_router(module.router, prefix=API_PREFIX)

@@ -7,23 +7,22 @@ shapes. See docs/TEST_RESULTS.md for what remains BLOCKED.
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import uuid
-from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from sqlalchemy import select
 
 from clipforge.config import get_settings
-from clipforge.db.base import session_scope, utcnow
-from clipforge.db.models import Clip, Job, LiveSession, Project, Render, SocialAccount, Source
+from clipforge.db.base import session_scope
+from clipforge.db.models import Clip, Job, LiveSession, Project, Render, Source
 from clipforge.ingestion import acquire as acq
 from clipforge.ingestion import resolver as rs
 from clipforge.ingestion.urls import detect
 from clipforge.jobs import queue
-from clipforge.security.crypto import store_secret
-from tests.conftest import connect  # noqa: F401  (shared helper)
+from tests.conftest import connect
 
 pytestmark = pytest.mark.contract
 
@@ -54,7 +53,7 @@ def test_youtube_third_party_video_is_metadata_only(platforms, monkeypatch):
     assert res.metadata["title"] == "Someone else's talk"
     assert any("does not provide video downloads" in r for r in res.reasons)
     assert {a["action"] for a in res.alternatives} >= {"connect_youtube", "upload"}
-    key_param = [r for r in platforms.requests if r["path"] == "/youtube/v3/videos"][0]["query"]
+    key_param = next(r for r in platforms.requests if r["path"] == "/youtube/v3/videos")["query"]
     assert key_param["key"] == "AIza-test"
 
 
@@ -82,9 +81,21 @@ def test_owned_video_with_master_file_is_full_media(platforms):
     platforms.add_video("eeeeeeeeeee", title="Pricing Masterclass")
     masters = get_settings().library_dir / "masters"
     masters.mkdir(parents=True, exist_ok=True)
-    (masters / "Pricing Masterclass.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
-    res = resolve(make_source("https://www.youtube.com/watch?v=eeeeeeeeeee"))
+
+    def tiny_video(path, seconds):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=black:s=64x36:r=5:d={seconds}",
+                        "-c:v", "libx264", "-preset", "ultrafast", str(path)], check=True, timeout=60)
+
+    # Same-sounding name but a different length must never be used as the source.
+    tiny_video(masters / "Pricing Masterclass (teaser).mp4", 10)
+    source = make_source("https://www.youtube.com/watch?v=eeeeeeeeeee")
+    wrong = resolve(source)
+    assert wrong.method != "owner_media_library"
+    assert any("length differs" in c["result"] for c in wrong.checks)
+    tiny_video(masters / "Pricing Masterclass.mp4", 76)  # the fake video is PT1M16S
+    res = resolve(source)
     assert res.state == rs.FULL_MEDIA_ACCESS and res.method == "owner_media_library"
+    assert res.acquire["library_path"].endswith("Pricing Masterclass.mp4")
     platforms.add_video("fffffffffff", title="Pricing Masterclass", ended=True)
     replay = resolve(make_source("https://www.youtube.com/live/fffffffffff"))
     assert replay.state == rs.REPLAY_ACCESSIBLE and replay.live_status == "ended"
@@ -164,9 +175,8 @@ def test_direct_link_states():
 
 # ------------------------------------------------------- workflow honesty
 def _run_workflow(source_id, request=None) -> tuple[Job, Project]:
-    from clipforge.jobs.worker import Worker
-
     import clipforge.handlers  # noqa: F401
+    from clipforge.jobs.worker import Worker
 
     with session_scope() as db:
         project = Project(source_id=source_id, title="t", request=request or {"count": 2, "min_seconds": 3, "max_seconds": 30,

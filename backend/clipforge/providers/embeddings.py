@@ -16,6 +16,7 @@ search degrades to lexical matching instead of failing.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import re
 import threading
@@ -31,16 +32,13 @@ EMBEDDER_ID = "local-hybrid-v1"
 _SEM_WEIGHT = 0.8
 _LEX_WEIGHT = 0.6
 
-_STOP = set(
-    "the a an is are was were be been to of and or for on in with what how should my i me can which who "
-    "where when does do it this that these those you your we our they their as at by from about into".split()
-)
+_STOP = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "to", "of", "and", "or", "for", "on", "in", "with", "what", "how", "should", "my", "i", "me", "can", "which", "who", "where", "when", "does", "do", "it", "this", "that", "these", "those", "you", "your", "we", "our", "they", "their", "as", "at", "by", "from", "about", "into"}
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _tokens(text: str) -> list[str]:
     words = [w[:6] for w in _TOKEN_RE.findall(text.lower()) if w not in _STOP]
-    return words + [f"{a}_{b}" for a, b in zip(words, words[1:])]
+    return words + [f"{a}_{b}" for a, b in itertools.pairwise(words)]
 
 
 def lexical_vector(text: str) -> np.ndarray:
@@ -74,7 +72,7 @@ class LocalHybridEmbedder:
             options = TextEmbedderOptions(base_options=BaseOptions(model_asset_path=str(path)), l2_normalize=True)
             self._embedder = TextEmbedder.create_from_options(options)
             self._semantic_ok = True
-        except Exception as exc:  # model missing, no EGL, etc.
+        except Exception as exc:  # noqa: BLE001 - model missing, no EGL, etc.
             log.warning("Semantic embedder unavailable, using lexical-only vectors: %s", exc)
             self._semantic_ok = False
         return self._embedder

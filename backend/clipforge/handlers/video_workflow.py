@@ -21,7 +21,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy import select
 
-from ..brain.runtime import ChildSpec, await_approval, await_children, get_checkpointer, job_context, run_graph_job
+from ..brain.runtime import (
+    ChildSpec,
+    await_approval,
+    await_children,
+    get_checkpointer,
+    job_context,
+    run_graph_job,
+)
 from ..db.base import session_scope, utcnow
 from ..db.models import Clip, MediaAsset, OutputPackage, Project, Render, Source
 from ..ingestion import acquire as acq
@@ -190,7 +197,7 @@ def select_node(state: VideoState, config) -> VideoState:
         user_id = str(ctx.user_id) if ctx.user_id else None
         interests += [m["memory"] for m in get_memory().recall("topics my audience cares about", user_id=user_id,
                                                                limit=3, min_score=0.4)]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - degrade gracefully; logged
         log.debug("Memory unavailable for interests: %s", exc)
     req = highlights.SelectionRequest(
         count=int(request.get("count", 5)), min_s=float(request.get("min_seconds", 15)),
@@ -345,8 +352,8 @@ def transcript_moments_node(state: VideoState, config) -> VideoState:
                         reasons=cand.reasons, features={k: v for k, v in cand.features.items() if k != "_vec"},
                         scoring_method="transcript_only", status="candidate"))
         project.analysis_level = "transcript_only"
-        project.limitations = ["Only the caption transcript was available: moments were chosen from the words alone. "
-                               "No visual analysis was performed and no clips could be rendered."]
+        project.limitations = [("Only the caption transcript was available: moments were chosen from the words alone. "
+                                "No visual analysis was performed and no clips could be rendered.")]
     return {"outcome": "transcript_only"}
 
 

@@ -125,7 +125,7 @@ class MemoryService:
                     log.info("Memory extraction returned no facts; storing verbatim")
                 except NoProviderAvailable:
                     log.info("No model for memory extraction; storing verbatim")
-                except Exception as exc:  # malformed LLM output inside Mem0, etc.
+                except Exception as exc:  # noqa: BLE001 - malformed LLM output inside Mem0, etc.
                     log.warning("Mem0 inference failed (%s); storing verbatim", exc)
             out = self._memory.add([{"role": "user", "content": text}], metadata=meta, infer=False,
                                    **self._scope(user_id, agent))

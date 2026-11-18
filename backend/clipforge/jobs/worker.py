@@ -110,7 +110,7 @@ class Worker:
             from ..media.transcription import engines_status
 
             capabilities = {"transcription": [e["engine"] for e in engines_status() if e["available"]]}
-        except Exception:  # pragma: no cover - diagnostics only, never blocks startup
+        except Exception:  # noqa: BLE001 - pragma: no cover - diagnostics only, never blocks startup
             capabilities = {}
         with session_scope() as db:
             row = db.get(WorkerHeartbeat, self.worker_id)
@@ -131,7 +131,7 @@ class Worker:
                 if ctx is not None:
                     flags = queue.heartbeat(ctx.job_id, self.worker_id, self.lease)
                     ctx.flags.update(flags)
-            except Exception as exc:  # keep beating through transient DB issues
+            except Exception as exc:  # noqa: BLE001 - keep beating through transient DB issues
                 log.warning("Heartbeat error: %s", exc)
 
     def _maintenance(self) -> None:
@@ -143,7 +143,7 @@ class Worker:
             queue.recover_stale()
             if "default" in self.queues:
                 run_due_schedules()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully; logged
             log.warning("Maintenance error: %s", exc)
 
     def run(self, *, max_jobs: int | None = None, idle_exit_s: float | None = None) -> int:
@@ -211,7 +211,7 @@ class Worker:
         except PermanentError as exc:
             queue.fail(job.id, {"message": exc.user_message, "code": exc.code, **exc.details}, retryable=False,
                        label=exc.label)
-        except Exception as exc:  # noqa: BLE001 - classified below
+        except Exception as exc:
             transient = _is_transient(exc)
             log.exception("Job %s (%s) failed%s", job.id, job.type, " (transient)" if transient else "")
             queue.fail(

@@ -115,7 +115,7 @@ def recall(state: ChatState) -> ChatState:
             {"memory": m["memory"], "similarity": m.get("similarity")}
             for m in get_memory().recall(state["text"], user_id=state["user_id"], limit=4, min_score=0.45)
         ]
-    except Exception as exc:  # memory is helpful, never blocking
+    except Exception as exc:  # noqa: BLE001 - memory is helpful, never blocking
         log.warning("Memory recall failed: %s", exc)
     with session_scope() as db:
         clips = app_settings.get_section(db, "clips")

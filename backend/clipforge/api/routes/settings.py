@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,10 @@ from ...services import app_settings, control
 from ..deps import Principal, admin, client_ip, viewer
 
 router = APIRouter(tags=["settings"])
+
+
+class ControlBody(BaseModel):
+    integration: str | None = Field(None, max_length=60)
 
 
 @router.get("/settings")
@@ -35,11 +40,18 @@ def patch_settings(section: str, patch: dict[str, Any], request: Request, db: Se
     return updated.model_dump()
 
 
+@router.get("/control/integrations")
+def integrations(db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> list[dict]:
+    disabled = set(app_settings.get_section(db, "control").disabled_integrations)
+    return [{"name": name, "label": label, "enabled": name not in disabled} for name, label in control.INTEGRATIONS.items()]
+
+
 @router.post("/control/{action}")
-def control_action(action: str, request: Request, db: Session = Depends(get_db),
+def control_action(action: str, request: Request, body: ControlBody | None = Body(None), db: Session = Depends(get_db),
                    principal: Principal = Depends(admin)) -> dict:
     try:
-        return control.apply(db, action, user_id=principal.id, ip=client_ip(request))
+        return control.apply(db, action, user_id=principal.id, ip=client_ip(request),
+                             integration=body.integration if body else None)
     except ValueError as exc:
         raise HTTPException(400, {"code": "invalid", "message": str(exc)}) from exc
 

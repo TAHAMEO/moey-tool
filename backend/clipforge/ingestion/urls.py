@@ -90,7 +90,7 @@ def detect(url: str) -> DetectedSource:
     raw = (url or "").strip()
     if not raw:
         return _invalid(raw, "unknown", "No link provided.")
-    if not re.match(r"^[a-z][a-z0-9+.-]*://", raw, re.I):
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", raw, re.IGNORECASE):
         raw = "https://" + raw
     try:
         parts = urlsplit(raw)

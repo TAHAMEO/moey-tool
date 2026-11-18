@@ -90,7 +90,7 @@ def test_memory_survives_process_restart(owner_client):
         f"print(json.dumps(get_memory().recall('what caption style does the owner like', user_id='{user_id}', limit=1)))"
     )
     env = {**os.environ, "MEM0_TELEMETRY": "False"}
-    out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120)
+    out = subprocess.run([sys.executable, "-c", code], check=False, cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr[-2000:]
     found = json.loads(out.stdout.strip().splitlines()[-1])
     assert found and "yellow captions" in found[0]["memory"]
@@ -104,7 +104,7 @@ def test_conversation_state_is_checkpointed(owner_client):
         "from clipforge.brain.chat import get_graph; from clipforge.brain.runtime import thread_config; "
         f"s = get_graph().get_state(thread_config('chat:{conv}')); print(len(s.values.get('turns', [])))"
     )
-    out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, env={**os.environ, "MEM0_TELEMETRY": "False"},
+    out = subprocess.run([sys.executable, "-c", code], check=False, cwd=BACKEND, env={**os.environ, "MEM0_TELEMETRY": "False"},
                          capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr[-1500:]
     assert out.stdout.strip().splitlines()[-1] == "4"
@@ -225,6 +225,9 @@ def test_upload_validation_and_dedupe(owner_client, tmp_path):
     assert first["asset_id"] == second["asset_id"] and second["duplicate"] is True
     exe = owner_client.post("/api/chat/upload", files={"file": ("run.exe", b"MZ" * 100, "application/octet-stream")})
     assert exe.status_code == 400
+    from clipforge.config import get_settings
+
+    assert not list(get_settings().work_dir.glob("upload-*")), "rejected/duplicate uploads must not leave temp dirs"
     conv = _conversation(owner_client)
     reply = _say(owner_client, conv, "make 2 shorts from this", attachments=[first["asset_id"]])
     assert reply["meta"]["intent"] == "process_source" and reply["meta"]["cards"]

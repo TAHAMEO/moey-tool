@@ -182,7 +182,7 @@ def test_instagram_reel_resumable_publish(platforms, tmp_path, monkeypatch):
     assert container["params"]["media_type"] == "REELS" and container["params"]["upload_type"] == "resumable"
     assert container["params"]["caption"].startswith("Never compete on price.") and "#Pricing" in container["params"]["caption"]
     assert container["params"]["thumb_offset"] == "500"
-    rupload = [r for r in platforms.requests if r["path"].startswith("/rupload/")][0]
+    rupload = next(r for r in platforms.requests if r["path"].startswith("/rupload/"))
     assert rupload["headers"]["Authorization"].startswith("OAuth ") and int(rupload["headers"]["file_size"]) == rupload["size"]
     with session_scope() as db:
         publication = db.execute(select(Publication)).scalar_one()

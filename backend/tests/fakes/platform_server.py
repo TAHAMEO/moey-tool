@@ -13,6 +13,7 @@ import re
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Self
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -225,7 +226,7 @@ class FakePlatforms:
         if not details:
             del self.videos[video_id]["liveStreamingDetails"]
 
-    def __enter__(self) -> FakePlatforms:
+    def __enter__(self) -> Self:
         self.thread.start()
         return self
 

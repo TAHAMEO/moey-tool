@@ -23,7 +23,17 @@ import pytest
 from sqlalchemy import select
 
 from clipforge.db.base import session_scope
-from clipforge.db.models import Clip, Job, MediaAsset, OutputPackage, Project, Render, Source, Transcript, TranscriptChunk
+from clipforge.db.models import (
+    Clip,
+    Job,
+    MediaAsset,
+    OutputPackage,
+    Project,
+    Render,
+    Source,
+    Transcript,
+    TranscriptChunk,
+)
 from clipforge.jobs import queue
 from clipforge.jobs.worker import Worker
 from clipforge.media import transcription
@@ -79,7 +89,7 @@ def _run_until_done(job_id, timeout=900):
 
 
 def _wer(ref: str, hyp: str) -> float:
-    norm = lambda s: re.sub(r"[^a-z0-9' ]", " ", s.lower()).split()  # noqa: E731
+    norm = lambda s: re.sub(r"[^a-z0-9' ]", " ", s.lower()).split()
     r, h = norm(ref), norm(hyp)
     d = np.zeros((len(r) + 1, len(h) + 1), dtype=int)
     d[:, 0], d[0, :] = range(len(r) + 1), range(len(h) + 1)
@@ -116,7 +126,7 @@ def test_link_to_rendered_clips(owner_client, media):
             assert render.subtitle_report["passed"]
             video = get_storage().local_path(db.get(MediaAsset, render.video_asset_id).storage_key)
             probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", str(video)],
-                                              capture_output=True, text=True).stdout)
+                                              check=False, capture_output=True, text=True).stdout)
             codecs = {s["codec_type"]: (s["codec_name"], s.get("width"), s.get("height")) for s in probe["streams"]}
             assert codecs["video"] == ("h264", 1080, 1920) and codecs["audio"][0] == "aac"
             srt = get_storage().local_path(db.get(MediaAsset, render.srt_asset_id).storage_key).read_text()
@@ -154,7 +164,6 @@ def test_duplicate_link_reuses_expensive_work(owner_client, media):
 
 
 def test_transcription_resumes_failed_chunk(monkeypatch, media, tmp_path):
-    from clipforge.handlers import media_jobs
     from clipforge.media import ffmpeg_tools
 
     wav = tmp_path / "asr.wav"

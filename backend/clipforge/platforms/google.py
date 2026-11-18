@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import timedelta
@@ -24,6 +25,8 @@ from ..db.base import utcnow
 from ..db.models import OAuthState, PlatformQuotaUsage, SocialAccount
 from ..security.crypto import read_secret_json, store_secret, update_secret
 from .http import PlatformError, request
+
+log = logging.getLogger(__name__)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 SCOPES = {
@@ -164,8 +167,8 @@ def revoke(db: Session, account: SocialAccount) -> None:
         if token:
             request("google", "POST", get_settings().google_oauth_base.rstrip("/") + "/revoke", params={"token": token},
                     max_attempts=2)
-    except Exception:  # revocation is best effort; local deletion always proceeds
-        pass
+    except Exception as exc:  # noqa: BLE001 - revocation is best effort; local deletion always proceeds
+        log.warning("Token revocation at Google failed (tokens are deleted locally anyway): %s", exc)
 
 
 # YouTube quota resets at midnight Pacific Time.

@@ -30,7 +30,7 @@ def best_frame_time(video: Path, start_s: float, end_s: float, *, scene_cuts: li
 
         detector = FaceDetector.create_from_options(FaceDetectorOptions(
             base_options=BaseOptions(model_asset_path=str(models.ensure("face_detector"))), min_detection_confidence=0.35))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - degrade gracefully; logged
         log.debug("Face detector unavailable for thumbnails: %s", exc)
     cuts = scene_cuts or []
     best_t, best_score = (start_s + end_s) / 2, -1.0

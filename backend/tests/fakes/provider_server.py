@@ -11,7 +11,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Self
 
 
 class FakeProviderServer:
@@ -105,7 +105,7 @@ class FakeProviderServer:
     def base(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
-    def __enter__(self) -> FakeProviderServer:
+    def __enter__(self) -> Self:
         self.thread.start()
         return self
 

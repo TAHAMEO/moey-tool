@@ -123,11 +123,15 @@ class S3Storage:
         return cached
 
     def exists(self, key: str) -> bool:
+        from botocore.exceptions import ClientError
+
         try:
             self.client.head_object(Bucket=self.bucket, Key=check_key(key))
             return True
-        except Exception:
-            return False
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=check_key(key))

@@ -56,7 +56,7 @@ def visual_features(proxy: Path, *, fps: float = 2.0) -> list[dict]:
         detector = FaceDetector.create_from_options(
             FaceDetectorOptions(base_options=BaseOptions(model_asset_path=str(models.ensure("face_detector"))),
                                 min_detection_confidence=0.35))
-    except Exception as exc:  # face features are optional
+    except Exception as exc:  # noqa: BLE001 - face features are optional
         log.warning("Face detector unavailable: %s", exc)
     samples: list[dict] = []
     previous = None

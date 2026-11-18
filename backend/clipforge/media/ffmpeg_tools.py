@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import logging
 import math
+import shutil
 import subprocess
 import wave
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -54,7 +56,7 @@ class ProbeResult:
 
 def probe(path: Path) -> ProbeResult:
     command = ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", *SAFE_INPUT, str(path)]
-    proc = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         raise MediaError("The file is not a readable video or audio file.", code="unreadable")
     data = json.loads(proc.stdout or "{}")
@@ -123,7 +125,7 @@ def make_mezzanine(src: Path, dest: Path, info: ProbeResult, *, on_progress=None
         fps = min(30.0, info.fps or 30.0) if (info.fps or 0) > 1 else 30.0
         vf = f"scale='if(gt(ih,1080),-2,iw)':'min(1080,ih)':flags=lanczos,fps={fps:.3f},format=yuv420p,setsar=1"
         args = [*SAFE_INPUT, "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(int(round(fps * 2))),
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(round(fps * 2)),
                 "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart",
                 "-map_metadata", "-1", "-sn", "-dn", str(dest)]
     else:
@@ -225,7 +227,7 @@ def sample_frames(video: Path, *, fps: float, width: int, start_s: float = 0.0, 
 def measure_loudness(path: Path) -> dict:
     """Integrated loudness / true peak via the ebur128 filter."""
     proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-map", "0:a:0?", "-af",
-                           "ebur128=peak=true", "-f", "null", "-"], capture_output=True, text=True, timeout=600)
+                           "ebur128=peak=true", "-f", "null", "-"], check=False, capture_output=True, text=True, timeout=600)
     text = proc.stderr
     out: dict = {}
     summary = text[text.rfind("Summary:"):] if "Summary:" in text else ""
@@ -242,8 +244,25 @@ def measure_loudness(path: Path) -> dict:
 def detect_black_and_freeze(path: Path, duration_s: float) -> dict:
     proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vf",
                            "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2", "-an", "-f", "null", "-"],
-                          capture_output=True, text=True, timeout=900)
+                          check=False, capture_output=True, text=True, timeout=900)
     black = sum(float(part.split("black_duration:")[1].split()[0]) for part in proc.stderr.splitlines() if "black_duration:" in part)
     freezes = sum(float(part.split("freeze_duration:")[1].split()[0]) for part in proc.stderr.splitlines() if "freeze_duration:" in part)
     return {"black_s": round(black, 2), "frozen_s": round(freezes, 2),
             "black_ratio": round(black / duration_s, 3) if duration_s else 0.0}
+
+
+@lru_cache(maxsize=1)
+def capabilities() -> dict:
+    """Installed FFmpeg version and the build options CLIPFORGE relies on."""
+    path = shutil.which("ffmpeg")
+    if not path:
+        return {"available": False}
+    out = subprocess.run([path, "-hide_banner", "-version"], check=False, capture_output=True, text=True, timeout=10).stdout
+    first = out.splitlines()[0] if out else ""
+    return {
+        "available": True,
+        "version": first.replace("ffmpeg version ", "").split(" ")[0],
+        "libass": "--enable-libass" in out,
+        "libx264": "--enable-libx264" in out,
+        "gpl": "--enable-gpl" in out,
+    }

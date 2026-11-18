@@ -17,8 +17,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from sqlalchemy import func, select
@@ -246,6 +247,6 @@ def run(db: Session) -> dict[str, Any]:
             get_memory().remember(record.finding, agent=True, category="lesson", infer=False,
                                   metadata={"learning_record_id": str(record.id), "confidence": record.confidence,
                                             "causal": record.causal_claim})
-    except Exception as exc:  # memory index is an accelerator only
+    except Exception as exc:  # noqa: BLE001 - memory index is an accelerator only
         log.warning("Could not index lessons in memory: %s", exc)
     return {"findings": len(findings), "experiments_concluded": len(concluded), "experiments_started": len(started)}

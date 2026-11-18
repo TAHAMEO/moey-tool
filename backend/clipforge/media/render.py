@@ -63,7 +63,7 @@ class EditPlan:
 
 
 META_RE = re.compile(r"\b(let me (just )?(check|see|find|look|grab|pull up)|where (was|were) (i|we)|hold on|one (second|sec)|"
-                     r"give me a (second|sec)|bear with me|as i was saying|what was i saying|sorry,? (where|what))\b", re.I)
+                     r"give me a (second|sec)|bear with me|as i was saying|what was i saying|sorry,? (where|what))\b", re.IGNORECASE)
 
 
 def _filler_sentence_cuts(words: list[dict], clip_start: float, clip_end: float) -> list[tuple[float, float]]:
@@ -156,7 +156,7 @@ def crop_path_for(mezzanine: Path, plan: EditPlan, *, has_video: bool, transcrip
     try:
         path = build_crop_path(mezzanine, start_s=plan.clip_start, end_s=plan.clip_end, transcript=transcript,
                                config=ReframeConfig(aspect_w=aw, aspect_h=ah, sample_fps=4.0))
-    except Exception as exc:  # reframing must never block a render
+    except Exception as exc:  # noqa: BLE001 - reframing must never block a render
         log.warning("Reframing failed (%s); using centre crop", exc)
         plan.notes.append("face-aware reframing unavailable; centre crop used")
         path = centre_crop(info.width, info.height, duration, aspect_w=aw, aspect_h=ah)
@@ -250,7 +250,7 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
         parts.append(f"color=c=0x101820:s={out_w}x{out_h}:r={FPS}:d={total:.3f}[bgc]")
         parts.append(f"{''.join(alabels)}concat=n={len(alabels)}:v=0:a=1,asplit=2[acat][awave]")
         parts.append(f"[awave]showwaves=s={out_w}x{out_h // 4}:mode=cline:colors=0xFFD400:rate={FPS}[wave]")
-        parts.append(f"[bgc][wave]overlay=0:(H-h)/2,format=yuv420p[vcat]")
+        parts.append("[bgc][wave]overlay=0:(H-h)/2,format=yuv420p[vcat]")
     else:
         if len(vlabels) == 1:
             parts.append(f"{vlabels[0]}null[vcat]")

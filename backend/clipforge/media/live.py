@@ -91,7 +91,7 @@ class LiveIngest:
                 "-segment_start_number", str(start_number), "-segment_format", "mpegts",
                 str(self.dir / SEGMENT_PATTERN)]
         # stderr goes to a per-spawn log file: an unread pipe could fill up and block FFmpeg.
-        self._log = open(self.dir / f"listener_{start_number:06d}.log", "ab")
+        self._log = open(self.dir / f"listener_{start_number:06d}.log", "ab")  # noqa: SIM115 - closed when the listener exits
         return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self._log, start_new_session=True)
 
     def _segment_files(self) -> list[tuple[int, Path]]:

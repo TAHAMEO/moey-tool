@@ -58,7 +58,7 @@ def live_env(monkeypatch, tmp_path):
 def _push(url: str, path: str, start: float, duration: float) -> int:
     return subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-ss", str(start), "-t", str(duration),
                            "-i", path, "-vf", "scale=960:540", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30",
-                           "-c:a", "aac", "-f", "mpegts", url], timeout=duration + 60).returncode
+                           "-c:a", "aac", "-f", "mpegts", url], check=False, timeout=duration + 60).returncode
 
 
 def test_live_stream_end_to_end(owner_client, live_env):

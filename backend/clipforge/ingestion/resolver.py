@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -129,14 +130,26 @@ def _match_master(db: Session, title: str, duration_s: float, res: AccessResult)
     """Find the owner's original file for one of their YouTube videos."""
     library = get_settings().library_dir / "masters"
     if library.exists():
+        from ..media.ffmpeg_tools import MediaError, probe
+
         best = None
         for path in library.rglob("*"):
             if path.is_file() and path.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm", ".m4v"):
                 score = SequenceMatcher(None, path.stem.lower(), title.lower()).ratio()
                 if score > 0.6 and (best is None or score > best[0]):
+                    # A similar name is not enough: the length must match too,
+                    # otherwise clips could be cut from the wrong video.
+                    try:
+                        length = probe(path).duration_s
+                    except (MediaError, OSError, ValueError):
+                        continue
+                    if duration_s and abs(length - duration_s) > max(2.0, 0.02 * duration_s):
+                        res.check("media_library", f"{path.name}: similar name but length differs "
+                                                   f"({length:.0f}s vs {duration_s:.0f}s)")
+                        continue
                     best = (score, path)
         if best:
-            res.check("media_library", f"matched local master {best[1].name} ({best[0]:.0%} title match)")
+            res.check("media_library", f"matched local master {best[1].name} ({best[0]:.0%} title match, length checked)")
             return {"library_path": str(best[1])}
     account = _account(db, "google_drive")
     if account is None:
@@ -250,8 +263,8 @@ def _resolve_youtube(db: Session, source: Source) -> AccessResult:
             tracks = youtube.captions_list(youtube.Auth(access_token=google.access_token(db, account)), source.external_id)
             google.record_quota(db, "captions.list")
             if tracks:
-                preferred = sorted(tracks, key=lambda t: ((t["snippet"].get("trackKind") or "").lower() == "asr",
-                                                          t["snippet"].get("language") != "en"))[0]
+                preferred = min(tracks, key=lambda t: ((t["snippet"].get("trackKind") or "").lower() == "asr",
+                                                          t["snippet"].get("language") != "en"))
                 res.state = TRANSCRIPT_ONLY
                 res.method = "youtube_owner_captions"
                 res.capabilities["transcript"] = True
@@ -392,7 +405,7 @@ def _resolve_direct(db: Session, source: Source) -> AccessResult:
         res.state = ACCESS_DENIED
         res.reasons.append(f"Link blocked for safety: {exc}")
         return res
-    except Exception as exc:  # network errors are temporary
+    except (httpx.HTTPError, OSError) as exc:  # network errors are temporary
         res.state = SOURCE_UNAVAILABLE
         res.retryable = True
         res.reasons.append(f"The link could not be reached ({exc.__class__.__name__}).")
@@ -466,6 +479,16 @@ def resolve(db: Session, source: Source) -> AccessResult:
                            capabilities={"metadata": True, "transcript": False, "media": True, "live": False})
         res.reasons.append("You uploaded this file.")
         res.acquire = {"asset_id": str(source.media_asset_id)}
+        return res
+    from ..services import control
+
+    if source.platform in ("youtube", "instagram", "gdrive", "direct") and \
+            control.integration_disabled_by_owner(db, f"source:{source.platform}"):
+        res = AccessResult(state=ACCESS_DENIED, platform=source.platform, source_type=source.source_type)
+        res.reasons.append(f"{control.INTEGRATIONS[f'source:{source.platform}']} is turned off in Settings → Automation & safety.")
+        res.checks.append({"check": "integration_switch", "result": "disabled by owner"})
+        res.alternatives.append({"action": "enable_integration", "label": "Turn it back on in Settings",
+                                 "href": "/settings#automation"})
         return res
     resolver = {"youtube": _resolve_youtube, "instagram": _resolve_instagram, "gdrive": _resolve_drive,
                 "direct": _resolve_direct, "live_ingest": _resolve_live_ingest}.get(source.platform)

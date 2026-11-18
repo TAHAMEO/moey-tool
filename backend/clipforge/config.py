@@ -8,6 +8,7 @@ key that encrypts API keys and OAuth tokens must be supplied explicitly.
 from __future__ import annotations
 
 import base64
+import binascii
 import os
 import secrets
 from functools import lru_cache
@@ -182,7 +183,7 @@ def _decode_key(text: str) -> bytes:
     padded = text + "=" * (-len(text) % 4)
     try:
         raw = base64.urlsafe_b64decode(padded)
-    except Exception:  # pragma: no cover - fall back to standard alphabet
+    except (binascii.Error, ValueError):  # pragma: no cover - fall back to standard alphabet
         raw = base64.b64decode(padded)
     if len(raw) != 32:
         raise ValueError("CLIPFORGE_MASTER_KEY must decode to exactly 32 bytes")

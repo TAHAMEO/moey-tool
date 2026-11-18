@@ -20,11 +20,11 @@ NUMBER_WORDS = {
     "a few": 3, "several": 5, "a dozen": 12,
 }
 _NUM = r"(\d{1,2}|" + "|".join(sorted(map(re.escape, NUMBER_WORDS), key=len, reverse=True)) + r")"
-COUNT_RE = re.compile(_NUM + r"\s+(?:\w+\s+){0,3}?(shorts?|clips?|reels?|videos?|highlights?|moments?|cuts?)\b", re.I)
-DURATION_MAX_RE = re.compile(r"(?:under|less than|max(?:imum)?|at most|no longer than|up to|<)\s*(\d{1,3})\s*(s|sec|secs|seconds|m|min|mins|minutes)\b", re.I)
-DURATION_RANGE_RE = re.compile(r"(\d{1,3})\s*(?:-|to|–)\s*(\d{1,3})\s*(s|sec|secs|seconds|m|min|mins|minutes)\b", re.I)
-DURATION_MIN_RE = re.compile(r"(?:at least|over|more than|min(?:imum)?)\s*(\d{1,3})\s*(s|sec|secs|seconds|m|min|mins|minutes)\b", re.I)
-FOCUS_RE = re.compile(r"\b(?:about|on|focus(?:ing)? on|related to|where (?:he|she|they) talks? about)\s+(?:the\s+)?([\w\s'-]{3,60}?)(?:[.,;!?]|$|\s+(?:from|in|for|and|with)\b)", re.I)
+COUNT_RE = re.compile(_NUM + r"\s+(?:\w+\s+){0,3}?(shorts?|clips?|reels?|videos?|highlights?|moments?|cuts?)\b", re.IGNORECASE)
+DURATION_MAX_RE = re.compile(r"(?:under|less than|max(?:imum)?|at most|no longer than|up to|<)\s*(\d{1,3})\s*(s|sec|secs|seconds|m|min|mins|minutes)\b", re.IGNORECASE)
+DURATION_RANGE_RE = re.compile(r"(\d{1,3})\s*(?:-|to|–)\s*(\d{1,3})\s*(s|sec|secs|seconds|m|min|mins|minutes)\b", re.IGNORECASE)
+DURATION_MIN_RE = re.compile(r"(?:at least|over|more than|min(?:imum)?)\s*(\d{1,3})\s*(s|sec|secs|seconds|m|min|mins|minutes)\b", re.IGNORECASE)
+FOCUS_RE = re.compile(r"\b(?:about|on|focus(?:ing)? on|related to|where (?:he|she|they) talks? about)\s+(?:the\s+)?([\w\s'-]{3,60}?)(?:[.,;!?]|$|\s+(?:from|in|for|and|with)\b)", re.IGNORECASE)
 
 
 @dataclass
@@ -114,7 +114,7 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
     # Keyword detection ignores the links themselves (a youtube.com link says
     # where the source is, not where the clips should be published).
     lower = URL_RE.sub(" ", text).lower()
-    base = dict(text=text, urls=urls)
+    base = {"text": text, "urls": urls}
 
     # --- global controls ---------------------------------------------------
     if re.search(r"\b(emergency stop|stop everything|kill switch|stop all (jobs|automation|publishing))\b", lower):
@@ -130,7 +130,7 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
     focus = None
     if m := FOCUS_RE.search(text):
         candidate = m.group(1).strip()
-        if not re.search(r"(youtube|instagram|http|www\.)", candidate, re.I) and len(candidate.split()) <= 8:
+        if not re.search(r"(youtube|instagram|http|www\.)", candidate, re.IGNORECASE) and len(candidate.split()) <= 8:
             focus = candidate
     caption_style = None
     for style, pattern in (("karaoke_fill", r"karaoke"), ("boxed", r"boxed|box(ed)? captions"),

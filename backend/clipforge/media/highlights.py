@@ -147,7 +147,7 @@ class _Index:
 
     def levels_between(self, start: float, end: float) -> np.ndarray:
         w = self.sigs.level_window_s
-        a, b = int(start / w), max(int(start / w) + 1, int(math.ceil(end / w)))
+        a, b = int(start / w), max(int(start / w) + 1, math.ceil(end / w))
         return np.asarray(self.sigs.levels_db[a:b] or [self.level_mean])
 
 

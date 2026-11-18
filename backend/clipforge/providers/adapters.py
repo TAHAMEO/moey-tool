@@ -184,7 +184,7 @@ class OllamaAdapter(OpenAICompatibleAdapter):
     default_base_url = "http://localhost:11434/v1"
 
     def list_models(self) -> list[DiscoveredModel]:
-        root = self.base_url[: -len("/v1")] if self.base_url.endswith("/v1") else self.base_url
+        root = self.base_url.removesuffix("/v1")
         try:
             data = _get(f"{root}/api/tags", headers={})
             return [DiscoveredModel(model_id=m["name"]) for m in data.get("models", []) if m.get("name")]

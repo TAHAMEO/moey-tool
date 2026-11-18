@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from datetime import timedelta
-from functools import lru_cache
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -15,27 +13,12 @@ from sqlalchemy.orm import Session
 from ...config import get_settings
 from ...db.base import get_db, utcnow
 from ...db.models import WorkerHeartbeat
+from ...media import ffmpeg_tools
 from ...media import models as model_registry
 from ...services.redis_client import get_redis
 from ..deps import Principal, admin
 
 router = APIRouter(tags=["health"])
-
-
-@lru_cache(maxsize=1)
-def _ffmpeg_info() -> dict:
-    path = shutil.which("ffmpeg")
-    if not path:
-        return {"available": False}
-    out = subprocess.run([path, "-hide_banner", "-version"], capture_output=True, text=True, timeout=10).stdout
-    first = out.splitlines()[0] if out else ""
-    return {
-        "available": True,
-        "version": first.replace("ffmpeg version ", "").split(" ")[0],
-        "libass": "--enable-libass" in out,
-        "libx264": "--enable-libx264" in out,
-        "gpl": "--enable-gpl" in out,
-    }
 
 
 def _checks(db: Session) -> dict:
@@ -44,10 +27,10 @@ def _checks(db: Session) -> dict:
         db.execute(text("SELECT 1"))
         version = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
         checks["database"] = {"ok": True, "schema_version": version}
-    except Exception as exc:  # pragma: no cover - reported, not raised
+    except Exception as exc:  # noqa: BLE001 - pragma: no cover - reported, not raised
         checks["database"] = {"ok": False, "error": exc.__class__.__name__}
     checks["redis"] = {"ok": get_redis() is not None, "required": False}
-    ff = _ffmpeg_info()
+    ff = ffmpeg_tools.capabilities()
     checks["ffmpeg"] = {"ok": ff.get("available", False) and ff.get("libass", False), **ff}
     workers = db.execute(select(WorkerHeartbeat).where(WorkerHeartbeat.seen_at >= utcnow() - timedelta(seconds=90))).scalars().all()
     queues = sorted({q for w in workers for q in w.queues.split(",")})

@@ -1,0 +1,258 @@
+export type Me = { id: string; email: string; display_name: string; role: string; csrf_token: string };
+
+export type JobSummary = {
+  id: string;
+  type: string;
+  status: "queued" | "running" | "waiting" | "paused" | "failed" | "completed" | "cancelled";
+  label: string;
+  stage: string | null;
+  progress: number;
+  attempts: number;
+  max_attempts: number;
+  error: { message?: string; code?: string } | null;
+  project_id: string | null;
+  created_at: string;
+  finished_at: string | null;
+  waiting?: { type?: string; label?: string; packages?: ApprovalPackage[] } | null;
+};
+
+export type JobDetail = JobSummary & {
+  result: Record<string, unknown> | null;
+  events: { at: string; level: string; stage: string | null; message: string }[];
+  children: JobSummary[];
+};
+
+export type ApprovalPackage = {
+  package_id: string;
+  platform: string;
+  rank: number;
+  title: string;
+  qc_passed: boolean;
+  review_words: number;
+};
+
+export type Card =
+  | { type: "job"; job_id: string; project_id: string | null; title?: string }
+  | { type: "settings_suggestion"; section: string; patch: Record<string, unknown> }
+  | { type: "memory_matches"; items: { id: string; memory: string }[] }
+  | { type: "link"; href: string; label: string };
+
+export type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  meta: { intent?: string; actions?: { step: string; detail: string }[]; cards?: Card[]; attachments?: string[] };
+  created_at?: string;
+};
+
+export type Conversation = { id: string; title: string; updated_at: string };
+
+export type ProjectSummary = {
+  id: string;
+  title: string;
+  status: string;
+  status_label: string;
+  analysis_level: string | null;
+  created_at: string;
+  updated_at: string;
+  clips: number;
+  thumbnail_url: string | null;
+  source: { platform: string; url: string | null; access_status: string; title?: string } | null;
+  job: JobSummary | null;
+};
+
+export type Render = {
+  id: string;
+  aspect: string;
+  status: string;
+  video_url: string | null;
+  srt_url: string | null;
+  vtt_url: string | null;
+  thumbnail_url: string | null;
+  captions_burned: boolean;
+  quality: { passed?: boolean; checks: { name: string; ok: boolean; detail: string; blocking: boolean }[]; loudness?: Record<string, number> };
+  subtitles: { passed?: boolean; issues?: { type: string; detail: string }[]; review_words?: { word: string; reason: string; time: number }[]; max_cps?: number; misspelled?: string[]; language?: string };
+  edits: { removed_silence_s?: number; crop_strategies?: string[]; punch_in_cuts?: number; notes?: string[] };
+};
+
+export type Publication = {
+  id: string;
+  status: string;
+  url: string | null;
+  external_id: string | null;
+  published_at: string | null;
+  last_error: string | null;
+  metrics: Record<string, number> | null;
+  unavailable_metrics: Record<string, string> | null;
+};
+
+export type Package = {
+  id: string;
+  platform: "youtube" | "instagram";
+  status: string;
+  title: string;
+  description: string;
+  tags: string[];
+  caption: string;
+  hashtags: string[];
+  privacy: string;
+  metadata_method: string;
+  thumbnail_url: string | null;
+  publications: Publication[];
+};
+
+export type Clip = {
+  id: string;
+  rank: number;
+  start_s: number;
+  end_s: number;
+  title: string;
+  hook: string;
+  transcript: string;
+  scores: Record<string, number>;
+  total_score: number;
+  reasons: string[];
+  status: string;
+  scoring_method: string;
+  renders: Render[];
+  packages: Package[];
+};
+
+export type AccessDetail = {
+  state: string;
+  platform: string;
+  method: string | null;
+  capabilities: { metadata: boolean; transcript: boolean; media: boolean; live: boolean };
+  metadata: Record<string, unknown>;
+  live_status: string | null;
+  owned: boolean | null;
+  reasons: string[];
+  alternatives: { action: string; label: string; href: string }[];
+  checks: { check: string; result: string }[];
+};
+
+export type ProjectDetail = ProjectSummary & {
+  instruction: string;
+  request: Record<string, unknown>;
+  limitations: string[];
+  errors: { code: string; message: string }[];
+  access: AccessDetail | null;
+  clips: Clip[];
+  jobs: JobSummary[];
+};
+
+export type ProviderModel = {
+  id: string;
+  model_id: string;
+  enabled: boolean;
+  quality_tier: number;
+  capabilities: Record<string, unknown>;
+  context_window: number | null;
+  price_in_per_mtok: number | null;
+  price_out_per_mtok: number | null;
+  price_source: string;
+  calls: number;
+  latency_ms: number | null;
+  success_rate: number;
+};
+
+export type ProviderConnection = {
+  id: string;
+  provider_type: string;
+  provider_label: string;
+  name: string;
+  base_url: string | null;
+  enabled: boolean;
+  is_local: boolean;
+  status: string;
+  last_error: string | null;
+  last_tested_at: string | null;
+  cooldown_until: string | null;
+  key_hint: string | null;
+  usage_30d: { calls: number; cost_usd: number; tokens: number };
+  models: ProviderModel[];
+};
+
+export type ProvidersResponse = {
+  connections: ProviderConnection[];
+  available_types: { type: string; label: string; needs_key: boolean; needs_base_url: boolean }[];
+};
+
+export type ConnectionTest = { ok: boolean; models_discovered: number; chat_ok: boolean | null; error: string | null; probe_model?: string; discovery_error?: string };
+
+export type UsageSummary = {
+  today_usd: number;
+  month_usd: number;
+  budgets: { daily: number; monthly: number; per_job: number };
+  cache_hits_month: number;
+  failed_calls_month: number;
+  calls_with_estimated_prices: number;
+  by_model: { provider_type: string; model: string; calls: number; cost_usd: number; input_tokens: number; output_tokens: number }[];
+  by_task: { task: string; calls: number; cost_usd: number }[];
+};
+
+export type AISettings = {
+  local_first: boolean; allow_paid_apis: boolean; daily_budget_usd: number; monthly_budget_usd: number; per_job_budget_usd: number;
+  consensus_max_providers: number; cloud_transcription_allowed: boolean; llm_rerank_clips: boolean; vision_analysis: "off" | "local" | "allow_cloud";
+};
+export type PublishingSettings = {
+  policy: "approval_required" | "auto_publish" | "draft_only"; platforms: ("youtube" | "instagram")[]; default_privacy: "private" | "unlisted" | "public";
+  max_per_day_youtube: number; max_per_day_instagram: number; upload_youtube_captions: boolean; instagram_share_to_feed: boolean;
+  youtube_category_id: string; youtube_playlist_id: string | null; made_for_kids: boolean;
+};
+export type ClipSettings = {
+  default_count: number; min_seconds: number; max_seconds: number; aspects: ("9:16" | "1:1" | "16:9")[];
+  caption_style: "bold_pop" | "karaoke_fill" | "clean_lower" | "boxed"; burn_captions: boolean; languages: string[]; remove_silences: boolean;
+  min_silence_to_cut_s: number; punch_in_zoom: boolean; loudness_lufs: number; music_volume_db: number; use_licensed_music: boolean;
+};
+export type BrandSettings = { accent_color: string; watermark_library_item_id: string | null; watermark_position: string; channel_name: string };
+export type RetentionSettings = { source_media_days: number; work_files_days: number; live_buffer_minutes: number; keep_renders_days: number };
+export type AllSettings = {
+  ai: AISettings; publishing: PublishingSettings; control: { paused: boolean; emergency_stop: boolean; disabled_integrations: string[] };
+  clips: ClipSettings; brand: BrandSettings; analytics: { collection_offsets_hours: number[] }; retention: RetentionSettings; ui: { show_diagnostics: boolean };
+};
+
+export type SocialAccount = {
+  id: string; platform: "youtube" | "instagram" | "google_drive"; display_name: string; external_id: string; status: string;
+  scopes: string[]; connected_at: string; token_expires_at: string | null; meta: Record<string, string | null>;
+};
+export type ConnectionsResponse = {
+  accounts: SocialAccount[];
+  apps: { google: { configured: boolean; redirect_uri: string }; instagram: { configured: boolean; redirect_uri: string }; youtube_api_key: boolean };
+  youtube_quota_remaining: number;
+};
+
+export type LiveSession = {
+  id: string; status: string; protocol: string; port: number; source_id: string | null; connections: number; segments: number;
+  stream_seconds: number; candidates: { start: number; end: number; score: number; text?: string }[]; retention_minutes: number;
+  started_at: string | null; ended_at: string | null; created_at: string; publish_url?: string; note?: string;
+};
+
+export type LibraryItem = { id: string; kind: string; title: string; tags: string[]; license_note: string; rights_confirmed: boolean; url: string | null; created_at: string };
+
+export type MemoryItem = { id: string; memory: string; score?: number; metadata?: Record<string, unknown> | null; created_at?: string; updated_at?: string | null };
+
+export type KnowledgeItem = {
+  id: string; topic: string | null; question: string; answer: string; providers: string[]; agreement: string | null; disagreements: string[];
+  confidence: number; verification_status: string; reuse_count: number; responses: { provider?: string; model?: string; answer?: string }[] | null; created_at: string;
+};
+
+export type LearningRecord = {
+  id: string; kind: string; finding: string; evidence: Record<string, unknown>; platform: string | null; confidence: number;
+  limitations: string; causal_claim: boolean; strategy_id: string | null; next_experiment: string | null;
+  related_publications: number; status: string; created_at: string;
+};
+export type Strategy = { id: string; version: number; name: string; status: string; params: Record<string, unknown>; rationale: string; parent_id: string | null; created_at: string; activated_at: string | null };
+export type Experiment = {
+  id: string; name: string; hypothesis: string; platform: string | null; status: string; allocation: number; metric: string; min_samples_per_arm: number;
+  result: Record<string, unknown> | null; started_at: string; ended_at: string | null; control_strategy_id: string; variant_strategy_id: string;
+};
+export type AnalyticsSummary = {
+  text: string;
+  platforms: Record<string, { published_with_data: number; median_views: number; median_engagement_rate: number | null;
+    top: { title: string; views: number; age_hours: number }[]; bottom: { title: string; views: number; age_hours: number }[] }>;
+};
+export type PublicationAnalytics = {
+  id: string; platform: string; status: string; title: string; url: string | null; published_at: string | null; last_error: string | null;
+  snapshots: { at: string; age_hours: number; metrics: Record<string, number>; unavailable: Record<string, string> }[];
+};

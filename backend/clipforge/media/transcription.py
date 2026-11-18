@@ -15,6 +15,7 @@ checkpoint, so a failure re-runs only the chunks that did not finish.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import re
@@ -23,6 +24,7 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
@@ -137,7 +139,7 @@ class FasterWhisperEngine(Engine):
     quality = 3
     punctuated = True
     languages = ("*",)
-    _models: dict[str, object] = {}
+    _models: ClassVar[dict[str, object]] = {}  # shared across instances: one loaded model per size
     _lock = threading.Lock()
 
     @property
@@ -212,7 +214,7 @@ class WhisperXEngine(Engine):
         try:
             proc = subprocess.run([str(python), str(self._script()), "--check", "--model", self.model_label,
                                    "--models-dir", str(get_settings().models_dir)],
-                                  capture_output=True, text=True, timeout=120)
+                                  check=False, capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return False, f"WhisperX check failed: {exc}"
         if proc.returncode == 0:
@@ -225,7 +227,7 @@ class WhisperXEngine(Engine):
         proc = subprocess.run([str(python), str(self._script()), "--wav", str(wav), "--start", str(start_s),
                                "--end", str(end_s), "--language", language or "auto", "--model", self.model_label,
                                "--models-dir", str(get_settings().models_dir), "--out", str(out_path)],
-                              capture_output=True, text=True, timeout=max(600, int((end_s - start_s) * 6)))
+                              check=False, capture_output=True, text=True, timeout=max(600, int((end_s - start_s) * 6)))
         if proc.returncode != 0:
             raise TranscriptionUnavailable(f"WhisperX failed: {(proc.stderr or proc.stdout)[-500:]}")
         data = json.loads(out_path.read_text())
@@ -276,7 +278,7 @@ def plan_chunks(wav: Path, *, chunk_s: float | None = None, search_s: float | No
         bounds.append(round(cut + 0.125, 3))
         target = cut + chunk_s
     bounds.append(round(duration, 3))
-    return list(zip(bounds[:-1], bounds[1:]))
+    return list(itertools.pairwise(bounds))
 
 
 # ------------------------------------------------------------- punctuation
