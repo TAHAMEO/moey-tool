@@ -87,9 +87,13 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
     for clip in db.execute(select(Clip).where(Clip.project_id == project.id).order_by(Clip.rank)).scalars():
         renders = []
         for r in db.execute(select(Render).where(Render.clip_id == clip.id).order_by(Render.created_at)).scalars():
-            renders.append({"id": str(r.id), "aspect": r.aspect, "status": r.status, "video_url": _asset_url(r.video_asset_id),
-                            "srt_url": _asset_url(r.srt_asset_id), "vtt_url": _asset_url(r.vtt_asset_id),
-                            "thumbnail_url": _asset_url(r.thumbnail_asset_id), "captions_burned": r.captions_burned,
+            live = r.status != "expired"  # expired renders' files were removed by storage clean-up
+            renders.append({"id": str(r.id), "aspect": r.aspect, "status": r.status,
+                            "video_url": _asset_url(r.video_asset_id) if live else None,
+                            "srt_url": _asset_url(r.srt_asset_id) if live else None,
+                            "vtt_url": _asset_url(r.vtt_asset_id) if live else None,
+                            "thumbnail_url": _asset_url(r.thumbnail_asset_id) if live else None,
+                            "captions_burned": r.captions_burned,
                             "quality": {"passed": r.quality_report.get("passed"),
                                         "checks": r.quality_report.get("checks", []),
                                         "loudness": r.quality_report.get("loudness")},

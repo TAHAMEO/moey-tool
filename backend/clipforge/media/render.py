@@ -16,6 +16,7 @@ Pipeline for one clip and aspect ratio:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import shutil
@@ -48,6 +49,8 @@ class EditPlan:
     loudness_lufs: float = -14.0
     watermark: str | None = None
     watermark_position: str = "top_right"
+    #: Brand accent colour for the highlighted caption word (styles that highlight words).
+    caption_accent: str | None = None
     music: str | None = None
     music_db: float = -22.0
     fade_s: float = 0.15
@@ -299,6 +302,14 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
     return ";".join(parts), audio_out
 
 
+def caption_style_for(plan: EditPlan) -> vcaptions.CaptionStyle:
+    """The preset caption style, with the brand accent colour on the highlighted word."""
+    style = vcaptions.get_style(plan.caption_style)
+    if plan.caption_accent and style.accent:  # presets without a highlight stay plain
+        style = dataclasses.replace(style, accent=plan.caption_accent)
+    return style
+
+
 def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, work_dir: Path, *, has_video: bool,
            has_audio: bool, transcript=None, crop_path: CropPath | None = None, on_progress=None, cancelled=None,
            still_at: float | None = None, still_path: Path | None = None) -> dict:
@@ -316,7 +327,7 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
     subtitle_name = None
     cwd = None
     if plan.burn_captions and out_words:
-        style = vcaptions.get_style(plan.caption_style)
+        style = caption_style_for(plan)
         ass_path = vcaptions.write_ass(workspace / "captions.ass", out_words, style, width=out_w, height=out_h)
         cwd, subtitle_name, _fonts = vff.relative_filter_workspace(ass_path, vcaptions.FONT_DIR)
     inputs = ["-ss", f"{plan.clip_start:.4f}", "-t", f"{plan.clip_end - plan.clip_start:.4f}", "-i", str(mezzanine)]

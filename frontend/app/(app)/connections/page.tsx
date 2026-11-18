@@ -380,25 +380,19 @@ function RoutingCard() {
       <SectionHeader title="Routing & spending" description="How CLIPFORGE chooses between your connections." />
       <Card className="divide-y divide-border">
         <div className="space-y-4 p-4">
+          <p className="text-[12px] text-muted">Audio and video frames are always analysed on this server. Only text — your messages, relevant memories, transcript excerpts and video titles — is sent to the AI services you connect.</p>
           <Toggle checked={value.local_first} onChange={(v) => save({ local_first: v })} label="Prefer local models"
             description="Use free local processing whenever it can do the job well; paid models handle what local ones can't." />
           <Toggle checked={value.allow_paid_apis} onChange={(v) => save({ allow_paid_apis: v })} label="Allow paid AI services"
             description="Turn off to run everything locally — CLIPFORGE falls back to rule-based results where no model is available." />
           <Toggle checked={value.llm_rerank_clips} onChange={(v) => save({ llm_rerank_clips: v })} label="AI second look at clip choices"
             description="An AI model reviews the top candidate clips for context and completeness before rendering." />
-          <Toggle checked={value.cloud_transcription_allowed} onChange={(v) => save({ cloud_transcription_allowed: v })} label="Allow cloud transcription"
-            description="Off by default: audio is transcribed on this server." />
         </div>
         <div className="grid gap-4 p-4 sm:grid-cols-3">
           <div><Label hint="USD">Daily limit</Label><Input inputMode="decimal" value={value.daily_budget_usd} onChange={(e) => setDraft({ ...draft, daily_budget_usd: Number(e.target.value) || 0 })} /></div>
           <div><Label hint="USD">Monthly limit</Label><Input inputMode="decimal" value={value.monthly_budget_usd} onChange={(e) => setDraft({ ...draft, monthly_budget_usd: Number(e.target.value) || 0 })} /></div>
           <div><Label hint="USD">Per video limit</Label><Input inputMode="decimal" value={value.per_job_budget_usd} onChange={(e) => setDraft({ ...draft, per_job_budget_usd: Number(e.target.value) || 0 })} /></div>
-          <div className="sm:col-span-2">
-            <Label>Images & frames</Label>
-            <Select value={value.vision_analysis} onChange={(v) => save({ vision_analysis: v as AISettings["vision_analysis"] })} options={[
-              { value: "local", label: "Analyse frames locally only" }, { value: "allow_cloud", label: "Allow cloud vision models" }, { value: "off", label: "Don't analyse frames with AI" }]} />
-          </div>
-          <div>
+          <div className="sm:col-span-3">
             <Label hint="for important questions">Second opinions</Label>
             <Select value={String(value.consensus_max_providers)} onChange={(v) => save({ consensus_max_providers: Number(v) })}
               options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: n === 1 ? "One model only" : `Up to ${n} models` }))} />

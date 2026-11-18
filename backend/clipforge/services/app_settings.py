@@ -28,9 +28,7 @@ class AISettings(_Section):
     monthly_budget_usd: float = Field(20.0, ge=0)
     per_job_budget_usd: float = Field(0.5, ge=0)
     consensus_max_providers: int = Field(2, ge=1, le=5)
-    cloud_transcription_allowed: bool = False
     llm_rerank_clips: bool = True
-    vision_analysis: Literal["off", "local", "allow_cloud"] = "local"
 
 
 class PublishingSettings(_Section):

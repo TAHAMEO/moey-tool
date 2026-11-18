@@ -13,12 +13,12 @@
    PostgreSQL 16 + pgvector ◄────────┼──── worker (default queue) ◄┘  orchestration, publishing,
    (data, memory vectors,            │      holds the master key        analytics, backups, live ingest
     job queue, checkpoints)          │
-   Redis (wake-ups, throttling) ◄────┴──── media-worker (media queue)   decoding, transcription,
+   Valkey (wake-ups, throttling) ◄───┴──── media-worker (media queue)   decoding, transcription,
                                            NO secrets                   analysis, rendering
    volume clipforge-data (/data): media, models, backups, memory history
 ```
 
-Only Caddy (and the SRT ports, if used) are published; the API, database and Redis are internal.
+Only Caddy (and the SRT ports, if used) are published; the API, database and Valkey (Redis-compatible) are internal.
 
 ## Choosing a server
 
@@ -76,20 +76,21 @@ The `migrate` service applies database migrations before the API and workers sta
 |---|---|
 | `GET /api/health` | liveness (process up) |
 | `GET /api/health/ready` | readiness: database and FFmpeg; also reports whether workers are alive. Point an uptime monitor at `https://<domain>/api/health/ready` |
-| `GET /api/diagnostics` (admin) | workers' heartbeats and queues, Redis, disk, models, transcription engines, permanent memory, platform app configuration |
+| `GET /api/diagnostics` (admin) | workers' heartbeats and queues, Redis/Valkey, disk, models, transcription engines, permanent memory, platform app configuration |
 | Dashboard → System health | the same, for admins in the app |
 | `docker compose exec api clipforge doctor` | full installation check; exit code 1 when something essential is missing |
 | `docker compose logs -f worker media-worker` | job progress and errors |
 
-Every job keeps an event timeline (project page → *Advanced diagnostics*); failed jobs show the
-error in the app and can be retried from their last checkpoint.
+Every job keeps an event timeline (project page → *Advanced diagnostics*, with *Settings → Advanced →
+Show technical details* on); failed jobs always show the error and can be retried from their last
+checkpoint.
 
 ## Scaling
 
 - More parallel processing on one server: `CLIPFORGE_MEDIA_WORKERS=2` in `.env`, then
   `docker compose up -d`.
 - Several servers: run additional `media-worker` containers elsewhere pointing at the same
-  PostgreSQL and Redis, and switch storage to S3 (local volumes can't be shared between hosts):
+  PostgreSQL and Valkey, and switch storage to S3 (local volumes can't be shared between hosts):
   ```
   CLIPFORGE_STORAGE_BACKEND=s3
   CLIPFORGE_S3_BUCKET=…  CLIPFORGE_S3_REGION=…  CLIPFORGE_S3_ENDPOINT_URL=…   (any S3-compatible service)

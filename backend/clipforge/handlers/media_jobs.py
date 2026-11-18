@@ -316,7 +316,8 @@ def render_job(ctx: JobContext) -> dict:
                                  burn_captions=options.get("burn_captions", project.request.get("burn_captions", clips_cfg.burn_captions)),
                                  punch_in=clips_cfg.punch_in_zoom, loudness_lufs=clips_cfg.loudness_lufs,
                                  music=options.get("music_path"), music_db=clips_cfg.music_volume_db,
-                                 watermark=options.get("watermark_path"), watermark_position=brand.watermark_position)
+                                 watermark=options.get("watermark_path"), watermark_position=brand.watermark_position,
+                                 caption_accent=brand.accent_color)
         slug = f"clip{rank:02d}_{aspect.replace(':', 'x')}"
         base_key = f"projects/{project_id}/clips/{clip_id}"
         video_key = f"{base_key}/{slug}.mp4"

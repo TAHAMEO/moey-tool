@@ -39,6 +39,8 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
 
 ## Functional limits
 
+- **No cloud speech or vision services**: audio and frames are always processed on your server
+  (only text is sent to AI providers), so transcription quality is bounded by the local engines.
 - **Speech recognition**: the bundled Vosk model is English-only, adds no punctuation (CLIPFORGE
   restores basic punctuation heuristically) and needs ~5.5 GB of RAM per media worker. Other
   languages need faster-whisper or WhisperX models. No speaker diarisation.

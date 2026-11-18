@@ -88,7 +88,8 @@ def test_live_stream_end_to_end(owner_client, live_env):
                 if db.get(Job, job_id).status_label == "Waiting for live source":
                     break
             time.sleep(0.5)
-        assert db.get(Job, job_id).status_label == "Waiting for live source"
+        with session_scope() as db:  # never reuse a session after its scope closed (it leaks a transaction)
+            assert db.get(Job, job_id).status_label == "Waiting for live source"
         wrong = publish_url.replace("passphrase=", "passphrase=WRONG")
         assert _push(wrong, live_env["path"], 0, 3) != 0  # unauthenticated feed refused
         assert _push(publish_url, live_env["path"], 0, 24) == 0  # first connection

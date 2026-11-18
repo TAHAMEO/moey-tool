@@ -21,13 +21,13 @@ export function LiveSection() {
   const { can } = useAuth();
   const { data, reload } = useResource<LiveSession[]>("/live/sessions", { poll: 5000 });
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ source_url: "", retention_minutes: 120 });
+  const [form, setForm] = useState({ source_url: "" });
   const [secret, setSecret] = useState<{ url: string; note?: string } | null>(null);
 
   async function create() {
     try {
       const res = await api<LiveSession>("/live/sessions", {
-        method: "POST", body: { source_url: form.source_url || null, retention_minutes: form.retention_minutes },
+        method: "POST", body: { source_url: form.source_url || null },
       });
       setCreating(false);
       setSecret({ url: res.publish_url ?? "", note: res.note });
@@ -85,10 +85,7 @@ export function LiveSection() {
             <Input placeholder="https://www.youtube.com/live/…" value={form.source_url} onChange={(e) => setForm({ ...form, source_url: e.target.value })} />
             <p className="mt-1 text-[12px] text-muted">Links the clips to the broadcast. The video itself always comes from your encoder.</p>
           </div>
-          <div>
-            <Label hint="minutes of raw stream kept for clipping">Keep</Label>
-            <Input type="number" min={5} max={1440} value={form.retention_minutes} onChange={(e) => setForm({ ...form, retention_minutes: Number(e.target.value) })} />
-          </div>
+          <p className="text-[12px] text-muted">The raw stream is kept for clipping as long as set under Automation & safety → Storage clean-up.</p>
         </div>
       </Modal>
       <Modal open={secret !== null} onClose={() => setSecret(null)} title="Stream address"

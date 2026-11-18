@@ -139,6 +139,9 @@ def test_learning_loop_correlation_experiment_and_promotion():
         assert experiment.status == "concluded" and experiment.result["winner"] == "variant"
         assert db.get(Strategy, variant_id).status == "active"
         assert db.get(Strategy, control_id).status == "retired"  # versioned, never overwritten
+        # Later videos use the promoted strategy (or a new experiment built on top of it).
+        later, arm = engine.assign_strategy(db, uuid.uuid4())
+        assert later.id == variant_id or (arm == "B" and later.parent_id == variant_id)
         result_record = db.execute(select(LearningRecord).where(LearningRecord.kind == "experiment_result")).scalar_one()
         assert result_record.causal_claim is True and "Randomized" in result_record.limitations
         rows = dataset(db)

@@ -127,11 +127,15 @@ local speech model (`uv run clipforge download-models --vosk`).
 
 ## Status
 
-All features above are implemented and tested. Platform integrations (YouTube, Instagram, cloud
-AI providers) are verified against their documented APIs with contract tests; they could not be
-exercised against the real services from the build environment because no credentials were
-supplied and several hosts were unreachable. [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) lists
-exactly what was verified how, and what remains blocked.
+Implemented and tested end to end with real software: the chat Brain, permanent memory, the
+Model Hub with real local models (two connections, routing, failover), link and upload
+ingestion, transcription, scene and face analysis, clip selection, rendering with captions,
+covers, live-stream ingest, the job system, the web app, the Docker installation, and backup and
+restore. YouTube, Instagram and cloud AI providers are implemented against their official APIs
+and verified with contract tests only: no credentials were supplied and those services were
+unreachable from the build environment. [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) states,
+for each of the 38 acceptance tests and 20 link-ingestion tests, what passed for real, what was
+contract-tested and what remains blocked — and what is needed to unblock it.
 
 No licence has been chosen for CLIPFORGE itself yet; included third-party components keep their
 own licences (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).

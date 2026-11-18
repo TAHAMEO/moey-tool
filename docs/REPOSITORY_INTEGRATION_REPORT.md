@@ -59,7 +59,7 @@ channels (see §4).
 
 * **Core:** LangGraph, Mem0, FFmpeg, WhisperX (isolated), PySceneDetect, PostgreSQL + pgvector.
 * **Video pipeline:** AutoClip-local modules (vendored) + PySceneDetect + transcription engines
-  (WhisperX → faster-whisper → Vosk → optional cloud ASR). FunClip, AI-Youtube-Shorts-Generator
+  (WhisperX → faster-whisper → Vosk; all local — no cloud speech recognition). FunClip, AI-Youtube-Shorts-Generator
   and AutoClip-desktop were compared and rejected as redundant or conflicting.
 * **Publishing:** official YouTube REST APIs, official Instagram Graph API, Inoue-AI SDK.
 * **Architecture references only:** ViralMint, Postiz (AGPL).

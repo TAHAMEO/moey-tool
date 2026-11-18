@@ -77,7 +77,7 @@ export function BrandSection({ settings, save, editable }: SectionProps) {
           <Input defaultValue={b.channel_name} disabled={!editable} onBlur={(e) => e.target.value !== b.channel_name && set({ channel_name: e.target.value })} />
         </div>
         <div>
-          <Label hint="used to highlight the active caption word">Accent colour</Label>
+          <Label hint="highlights the spoken caption word and cover text">Accent colour</Label>
           <div className="flex items-center gap-2">
             <input type="color" aria-label="Accent colour" value={b.accent_color} disabled={!editable}
               onChange={(e) => set({ accent_color: e.target.value.toUpperCase() })}

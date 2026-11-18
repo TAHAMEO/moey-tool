@@ -193,7 +193,7 @@ export type UsageSummary = {
 
 export type AISettings = {
   local_first: boolean; allow_paid_apis: boolean; daily_budget_usd: number; monthly_budget_usd: number; per_job_budget_usd: number;
-  consensus_max_providers: number; cloud_transcription_allowed: boolean; llm_rerank_clips: boolean; vision_analysis: "off" | "local" | "allow_cloud";
+  consensus_max_providers: number; llm_rerank_clips: boolean;
 };
 export type PublishingSettings = {
   policy: "approval_required" | "auto_publish" | "draft_only"; platforms: ("youtube" | "instagram")[]; default_privacy: "private" | "unlisted" | "public";

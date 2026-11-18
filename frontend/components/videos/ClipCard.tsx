@@ -14,10 +14,11 @@ import { ScoreBars } from "./ScoreBars";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-export function ClipCard({ clip, onChanged }: { clip: Clip; onChanged: () => void }) {
+export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; onChanged: () => void; technical?: boolean }) {
   const toast = useToast();
   const { can } = useAuth();
   const renders = clip.renders.filter((r) => r.status === "done");
+  const expired = renders.length === 0 && clip.renders.some((r) => r.status === "expired");
   const [aspect, setAspect] = useState(renders[0]?.aspect);
   const [details, setDetails] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -47,7 +48,9 @@ export function ClipCard({ clip, onChanged }: { clip: Clip; onChanged: () => voi
             </video>
           ) : (
             <div className="flex aspect-[9/16] items-center justify-center p-6 text-center text-[13px] text-white/60">
-              {clip.status === "candidate" ? "Moment identified from the transcript — no media was available to render it." : "Rendering…"}
+              {clip.status === "candidate" ? "Moment identified from the transcript — no media was available to render it."
+                : expired ? "The files of this clip were removed by storage clean-up. Use Adjust → Re-render to recreate them."
+                : "Rendering…"}
             </div>
           )}
           {renders.length > 1 && (
@@ -136,7 +139,7 @@ export function ClipCard({ clip, onChanged }: { clip: Clip; onChanged: () => voi
                   ))}
                 </ul>
               )}
-              <p className="text-[11px] text-faint">Scored by: {clip.scoring_method.replace(/_/g, " ")}</p>
+              {technical && <p className="text-[11px] text-faint">Scored by: {clip.scoring_method.replace(/_/g, " ")}</p>}
             </div>
           )}
         </div>

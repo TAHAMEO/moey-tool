@@ -63,8 +63,15 @@ def _migrate() -> None:
 @pytest.fixture(scope="session", autouse=True)
 def _database():
     get_settings.cache_clear()
+    # The session rebuilds the schema, so two sessions on the same test database would break each
+    # other. Hold an advisory lock for the whole session (autocommit: no transaction stays open).
+    guard = get_engine().connect().execution_options(isolation_level="AUTOCOMMIT")
+    if not guard.execute(text("SELECT pg_try_advisory_lock(7231001)")).scalar():
+        guard.close()
+        pytest.exit("Another test session is using the test database; run one session at a time.", returncode=3)
     _migrate()
     yield
+    guard.close()
 
 
 APP_TABLES_SQL = """
@@ -77,6 +84,13 @@ AND tablename NOT IN ('alembic_version')
 def _clean_tables():
     engine = get_engine()
     with engine.begin() as conn:
+        # A session leaked by an earlier test (open transaction, nobody to close it) would make the
+        # TRUNCATE wait forever. End such leftovers, and fail fast instead of hanging if anything
+        # still holds a lock.
+        conn.execute(text("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() "
+                          "AND pid <> pg_backend_pid() AND state = 'idle in transaction' "
+                          "AND state_change < now() - interval '2 seconds'"))
+        conn.execute(text("SET LOCAL lock_timeout = '30s'"))
         tables = [r[0] for r in conn.execute(text(APP_TABLES_SQL))]
         if tables:
             conn.execute(text("TRUNCATE " + ", ".join(f'"{t}"' for t in tables) + " CASCADE"))

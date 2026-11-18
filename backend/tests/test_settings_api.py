@@ -49,3 +49,17 @@ def test_integration_switches_are_enforced(owner_client, db):
 
     on = owner_client.post("/api/control/enable_integration", json={"integration": "source:youtube"})
     assert on.json()["disabled_integrations"] == []
+
+
+def test_diagnostics_report_media_workers_transcription(owner_client, db):
+    from clipforge.db.base import utcnow
+    from clipforge.db.models import WorkerHeartbeat
+
+    db.add(WorkerHeartbeat(worker_id="main", queues="default", hostname="a", pid=1, has_secrets=True,
+                           capabilities={"transcription": []}, seen_at=utcnow()))
+    db.add(WorkerHeartbeat(worker_id="media-1", queues="media", hostname="b", pid=2, has_secrets=False,
+                           capabilities={"transcription": ["vosk"]}, seen_at=utcnow()))
+    db.commit()
+    workers = owner_client.get("/api/diagnostics").json()["workers"]
+    assert workers["ok"] and workers["count"] == 2
+    assert workers["media_transcription_engines"] == ["vosk"]  # what the machines that transcribe have

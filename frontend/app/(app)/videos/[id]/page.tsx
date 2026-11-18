@@ -12,7 +12,7 @@ import { ClipCard } from "@/components/videos/ClipCard";
 import { api, formatDate } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
-import type { JobDetail, ProjectDetail } from "@/lib/types";
+import type { AllSettings, JobDetail, ProjectDetail } from "@/lib/types";
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,6 +20,8 @@ export default function ProjectPage() {
   const toast = useToast();
   const { can } = useAuth();
   const { data: project, reload } = useResource<ProjectDetail>(`/projects/${id}`, { poll: 6000 });
+  const { data: settings } = useResource<AllSettings>("/settings");
+  const technical = settings?.ui.show_diagnostics ?? false;
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!project) {
@@ -96,13 +98,13 @@ export default function ProjectPage() {
       {running && workflow && <div className="mb-6"><JobCard jobId={workflow.id} projectId={project.id} /></div>}
 
       <div className="space-y-5">
-        {project.clips.map((clip) => <ClipCard key={clip.id} clip={clip} onChanged={reload} />)}
+        {project.clips.map((clip) => <ClipCard key={clip.id} clip={clip} onChanged={reload} technical={technical} />)}
         {!running && project.clips.length === 0 && project.errors.length === 0 && (
           <p className="text-sm text-muted">No clips were produced for this project.</p>
         )}
       </div>
 
-      {(access?.checks.length || workflow) && (
+      {technical && (access?.checks.length || workflow) && (
         <details className="mt-8 rounded-xl border border-border bg-surface p-4 text-[12px]">
           <summary className="cursor-pointer font-medium text-muted">Advanced diagnostics</summary>
           {access && access.checks.length > 0 && (

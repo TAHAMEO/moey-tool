@@ -34,7 +34,11 @@ def _checks(db: Session) -> dict:
     checks["ffmpeg"] = {"ok": ff.get("available", False) and ff.get("libass", False), **ff}
     workers = db.execute(select(WorkerHeartbeat).where(WorkerHeartbeat.seen_at >= utcnow() - timedelta(seconds=90))).scalars().all()
     queues = sorted({q for w in workers for q in w.queues.split(",")})
-    checks["workers"] = {"ok": bool(workers), "count": len(workers), "queues": queues}
+    # Transcription runs in the media workers (possibly on other machines): report what *they* have.
+    media_engines = sorted({e for w in workers if "media" in w.queues.split(",")
+                            for e in (w.capabilities or {}).get("transcription", [])})
+    checks["workers"] = {"ok": bool(workers), "count": len(workers), "queues": queues,
+                         "media_transcription_engines": media_engines}
     usage = shutil.disk_usage(get_settings().data_dir)
     checks["disk"] = {"ok": usage.free > 2 * 1024**3, "free_gb": round(usage.free / 1024**3, 1)}
     return checks

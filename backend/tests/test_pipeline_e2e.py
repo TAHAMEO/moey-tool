@@ -119,6 +119,7 @@ def test_link_to_rendered_clips(owner_client, media):
         script = media["script"]
         for clip in clips:
             assert clip.status == "rendered" and clip.end_s - clip.start_s <= 31
+            assert clip.strategy_id is not None  # the strategy in force is recorded on every clip
             assert set(clip.scores) == {"hook", "clarity", "emotion", "novelty", "information", "completeness",
                                         "visual", "audio", "relevance", "platform"}
             render = db.execute(select(Render).where(Render.clip_id == clip.id)).scalar_one()

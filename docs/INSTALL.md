@@ -26,7 +26,7 @@ What it does:
 
 1. creates `.env` from `.env.example` with a random database password and master key
    (an existing `.env` is never overwritten);
-2. builds the images and starts the stack: PostgreSQL + pgvector, Redis, a one-shot migration,
+2. builds the images and starts the stack: PostgreSQL + pgvector, Valkey (Redis-compatible), a one-shot migration,
    the API, the main worker, the media worker, the web app and Caddy;
 3. waits until the API reports ready;
 4. downloads and verifies the models: four MediaPipe models (~15 MB, SHA-256 pinned) and the

@@ -62,8 +62,9 @@ Every source you've sent, newest first, filterable by *In progress*, *Ready*, *P
   platform confirms it; uploading the same file twice is blocked.
 - **Results** — views, likes, comments and more as the platform reports them. Metrics a platform
   doesn't provide are listed as unavailable, never shown as zero.
-- **Advanced diagnostics** — every access check and the job's timeline (useful when something
-  failed; *Retry* resumes from the last completed step).
+- **Advanced diagnostics** — every access check and the job's timeline, shown when *Settings →
+  Advanced → Show technical details* is on. Errors and the *Retry* button (which resumes from the
+  last completed step) are always shown.
 
 ## AI Connections
 
@@ -74,9 +75,9 @@ Each connection is tested when added (it lists the models and asks for a one-wor
   not, its role (*Best quality*, *Balanced*, *Fast & cheap*), exact prices, measured speed and
   reliability.
 - **Routing & spending:** prefer local models, allow paid services, AI second look at clip
-  choices, cloud transcription (off by default), daily/monthly/per-video limits, whether frames
-  may be sent to cloud vision models, and how many models give second opinions on important
-  questions.
+  choices, daily/monthly/per-video limits, and how many models give second opinions on important
+  questions. Audio and video frames never leave your server; only text (your messages, relevant
+  memories, transcript excerpts, titles) is sent to the AI services you connect.
 - **Usage this month:** calls, tokens and cost per model.
 
 CLIPFORGE picks a model per task automatically and moves to the next connection if one fails or

@@ -90,6 +90,9 @@ def prepare(package_id: uuid.UUID) -> Prepared:
             name = "YouTube channel" if package.platform == "youtube" else "Instagram professional account"
             raise PublishError(f"Connect your {name} in Settings → Connections before publishing.", code="not_connected")
         render = db.get(Render, package.render_id)
+        if render is not None and render.status == "expired":
+            raise PublishError("This clip's files were removed by storage clean-up. Re-render it (My Videos → Adjust) "
+                               "before publishing.", code="render_expired")
         if render is None or render.status != "done" or not render.quality_report.get("passed"):
             raise PublishError("This clip has not passed its quality checks, so it won't be published.", code="qc_failed")
         if package.platform == "instagram" and not render.captions_burned:

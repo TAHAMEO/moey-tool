@@ -65,3 +65,20 @@ def test_cover_text_fits_without_dangling_words():
     assert len(lines) == 3 and lines[-1].endswith("…") and size >= int(1080 * 0.095 * 0.72)
     last_word = lines[-1].rstrip("…").split()[-1].lower()
     assert last_word not in {"the", "a", "of", "to", "and", "most", "small", "with"}
+
+
+def test_brand_accent_colours_the_highlighted_caption_word(tmp_path):
+    from clipforge.vendor.autoclip import captions as vcaptions
+
+    words = [{"text": w, "start": 0.2 + i * 0.4, "end": 0.5 + i * 0.4, "conf": 1.0} for i, w in enumerate(["brand", "colour", "test"])]
+    plan = render.plan_edits(0.0, 3.0, [], words, remove_silences=False, aspect="9:16", caption_style="bold_pop",
+                             burn_captions=True, punch_in=False, loudness_lufs=-14.0, music=None, music_db=-22.0,
+                             watermark=None, watermark_position="top_right", caption_accent="#12AB34")
+    style = render.caption_style_for(plan)  # what render() burns in
+    assert style.accent == "#12AB34"
+    ass = vcaptions.write_ass(tmp_path / "c.ass", render.remap_words(words, plan.keep), style, width=1080, height=1920)
+    text = ass.read_text()
+    assert vcaptions.ass_colour_override("#12AB34") in text
+    assert vcaptions.ass_colour_override("#FFE500") not in text  # the preset's own highlight colour was replaced
+    plain = render.plan_edits(0.0, 3.0, [], words, remove_silences=False, caption_style="clean_lower", caption_accent="#12AB34")
+    assert render.caption_style_for(plain).accent is None  # styles without a highlight stay plain

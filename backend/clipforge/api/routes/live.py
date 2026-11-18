@@ -17,6 +17,7 @@ from ...jobs import queue
 from ...media import live
 from ...security.audit import audit
 from ...security.crypto import read_secret, store_secret
+from ...services import app_settings
 from ..deps import Principal, admin, client_ip, editor, viewer
 
 router = APIRouter(prefix="/live", tags=["live"])
@@ -25,7 +26,8 @@ ACTIVE = ("waiting", "live", "reconnecting", "stopping")
 
 class NewSession(BaseModel):
     source_url: str | None = Field(None, max_length=2000)
-    retention_minutes: int = Field(120, ge=5, le=1440)
+    #: Minutes of raw stream kept for clipping; defaults to Settings → Storage clean-up.
+    retention_minutes: int | None = Field(None, ge=5, le=1440)
 
 
 def _summary(db: Session, s: LiveSession) -> dict:
@@ -68,7 +70,9 @@ def create_session(body: NewSession, request: Request, db: Session = Depends(get
     secret = store_secret(db, f"live:{session_id}", passphrase)
     session = LiveSession(id=session_id, source_id=source.id, ingest_protocol="srt", port=_free_port(db),
                           stream_key_hash=hashlib.sha256(passphrase.encode()).hexdigest(), stream_key_hint=passphrase[-4:],
-                          secret_id=secret.id, retention_minutes=body.retention_minutes, status="waiting")
+                          secret_id=secret.id, status="waiting",
+                          retention_minutes=body.retention_minutes
+                          or app_settings.get_section(db, "retention").live_buffer_minutes)
     db.add(session)
     db.flush()
     queue.enqueue(db, "live.ingest", {"session_id": str(session_id)}, dedupe_key=f"live:{session_id}", max_attempts=5,

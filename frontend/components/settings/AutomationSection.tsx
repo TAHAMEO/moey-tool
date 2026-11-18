@@ -93,7 +93,7 @@ export function UISection({ settings, save, editable }: SectionProps) {
   return (
     <Row>
       <Toggle checked={settings.ui.show_diagnostics} disabled={!editable} onChange={(v) => save("ui", { show_diagnostics: v })}
-        label="Show technical details" description="Adds job logs, access checks and model routing details throughout the app." />
+        label="Show technical details" description="Project pages also show every access check, the job timeline and which method or model scored each clip." />
     </Row>
   );
 }

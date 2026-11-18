@@ -105,13 +105,17 @@ class Worker:
     def stop(self) -> None:
         self._stop.set()
 
-    def _register(self) -> None:
+    @staticmethod
+    def _capabilities() -> dict:
         try:
             from ..media.transcription import engines_status
 
-            capabilities = {"transcription": [e["engine"] for e in engines_status() if e["available"]]}
-        except Exception:  # noqa: BLE001 - pragma: no cover - diagnostics only, never blocks startup
-            capabilities = {}
+            return {"transcription": [e["engine"] for e in engines_status() if e["available"]]}
+        except Exception:  # noqa: BLE001 - pragma: no cover - diagnostics only, never blocks the worker
+            return {}
+
+    def _register(self) -> None:
+        capabilities = self._capabilities()
         with session_scope() as db:
             row = db.get(WorkerHeartbeat, self.worker_id)
             if row is None:
@@ -120,12 +124,18 @@ class Worker:
                                        has_secrets=self.has_secrets, capabilities=capabilities))
 
     def _heartbeat_loop(self) -> None:
+        beats = 0
         while not self._stop.wait(10):
+            beats += 1
             try:
+                # Models can be installed while the worker runs: refresh what it reports every ~5 min.
+                capabilities = self._capabilities() if beats % 30 == 0 else None
                 with session_scope() as db:
                     row = db.get(WorkerHeartbeat, self.worker_id)
                     if row is not None:
                         row.seen_at = utcnow()
+                        if capabilities is not None:
+                            row.capabilities = capabilities
                 with self._current_lock:
                     ctx = self._current
                 if ctx is not None:

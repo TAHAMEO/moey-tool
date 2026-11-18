@@ -26,10 +26,11 @@ function SetupChecklist({ connections, projects, diagnostics }: {
     try { setDismissed(localStorage.getItem("cf-setup-dismissed") === "1"); } catch { setDismissed(false); }
   }, []);
   if (!connections || !projects || !providers || dismissed) return null;
-  const engines = diagnostics?.transcription_engines as unknown as { available: boolean }[] | undefined;
+  // Transcription runs in the media workers, which report their engines in their heartbeats.
+  const engines = (diagnostics?.workers as { media_transcription_engines?: string[] } | undefined)?.media_transcription_engines;
   const has = (platform: string) => connections.accounts.some((a) => a.platform === platform);
   const steps = [
-    ...(can("admin") && engines ? [{ done: engines.some((e) => e.available), label: "Install the speech-recognition model",
+    ...(can("admin") && engines ? [{ done: engines.length > 0, label: "Install the speech-recognition model",
       hint: "On the server: docker compose exec worker clipforge download-models --vosk", href: null }] : []),
     { done: providers.connections.length > 0, label: "Connect an AI service (optional)",
       hint: "Smarter titles and answers. Everything else already runs locally.", href: "/connections" },

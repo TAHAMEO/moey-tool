@@ -86,7 +86,7 @@ addresses. `CLIPFORGE_SSRF_PRIVATE_ALLOWLIST` exists for development only.
 - Containers run as an unprivileged user (uid 10001) under `tini`; files created by CLIPFORGE are
   readable only by its service accounts (umask 007: owner and the `clipforge` group).
 - Only Caddy is published (plus UDP ports for authenticated SRT live ingest, each session with its
-  own passphrase). The API, database and Redis are reachable only inside the Compose network.
+  own passphrase). The API, database and Valkey are reachable only inside the Compose network.
 - Use HTTPS for anything beyond `localhost` (`./scripts/install.sh --domain …`).
 - Back up regularly and copy backups off the server; backups contain encrypted credentials
   but never the master key.
