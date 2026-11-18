@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from ..config import get_settings
 from ..db.base import session_scope
-from ..db.models import Analysis, Clip, MediaAsset, Project, Render, Source, Transcript, TranscriptChunk
+from ..db.models import Analysis, Clip, LibraryItem, MediaAsset, Project, Render, Source, Transcript, TranscriptChunk
 from ..ingestion import acquire as acq
 from ..jobs.registry import JobContext, PermanentError, RetryableError, handler
 from ..media import analysis, ffmpeg_tools, render, subtitles, thumbnails, transcription
@@ -274,6 +274,18 @@ def render_job(ctx: JobContext) -> dict:
         brand = app_settings.get_section(db, "brand")
         aspects = project.request.get("aspects") or clips_cfg.aspects
         done = {r.aspect for r in db.execute(select(Render).where(Render.clip_id == clip_id, Render.status == "done")).scalars()}
+        # Owner-licensed assets only (rights explicitly confirmed in the media library).
+        library = {}
+        if brand.watermark_library_item_id:
+            item = db.get(LibraryItem, uuid.UUID(brand.watermark_library_item_id))
+            if item is not None and item.rights_confirmed and item.kind == "logo" and item.asset_id:
+                library["watermark_path"] = str(_local(db.get(MediaAsset, item.asset_id).storage_key))
+        if clips_cfg.use_licensed_music:
+            item = db.execute(select(LibraryItem).where(LibraryItem.kind == "music", LibraryItem.rights_confirmed.is_(True))
+                              .order_by(LibraryItem.created_at.desc())).scalars().first()
+            if item is not None and item.asset_id:
+                library["music_path"] = str(_local(db.get(MediaAsset, item.asset_id).storage_key))
+        options = {**library, **options}
     paths = _source_paths(source_id)
     words = load_words(source_id)
     analyses = load_analysis(source_id)

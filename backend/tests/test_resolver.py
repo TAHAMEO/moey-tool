@@ -23,35 +23,9 @@ from clipforge.ingestion import resolver as rs
 from clipforge.ingestion.urls import detect
 from clipforge.jobs import queue
 from clipforge.security.crypto import store_secret
-from tests.fakes.platform_server import FakePlatforms
+from tests.conftest import connect  # noqa: F401  (shared helper)
 
 pytestmark = pytest.mark.contract
-
-
-@pytest.fixture
-def platforms(monkeypatch):
-    with FakePlatforms() as fake:
-        env = {
-            "CLIPFORGE_GOOGLE_API_BASE": fake.base, "CLIPFORGE_GOOGLE_OAUTH_BASE": fake.base,
-            "CLIPFORGE_YOUTUBE_OEMBED_URL": f"{fake.base}/oembed", "CLIPFORGE_YOUTUBE_ANALYTICS_BASE": f"{fake.base}/v2",
-            "CLIPFORGE_INSTAGRAM_GRAPH_BASE": fake.base, "CLIPFORGE_GOOGLE_CLIENT_ID": "cid",
-            "CLIPFORGE_GOOGLE_CLIENT_SECRET": "csecret", "CLIPFORGE_META_APP_ID": "123", "CLIPFORGE_META_APP_SECRET": "msecret",
-        }
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-        get_settings.cache_clear()
-        yield fake
-    get_settings.cache_clear()
-
-
-def connect(platform: str, external_id: str) -> uuid.UUID:
-    with session_scope() as db:
-        account = SocialAccount(platform=platform, external_account_id=external_id, display_name=platform)
-        db.add(account)
-        db.flush()
-        tokens = {"access_token": "tok-" + platform, "refresh_token": "ref", "expires_at": (utcnow() + timedelta(days=30)).isoformat()}
-        account.secret_id = store_secret(db, f"oauth:{platform}:{account.id}", tokens).id
-        return account.id
 
 
 def make_source(url: str) -> uuid.UUID:

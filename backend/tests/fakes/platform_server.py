@@ -137,6 +137,8 @@ class FakePlatforms:
                     snippet = json.loads(match.group(0))["snippet"] if match else {}
                     cid = "cap_" + uuid.uuid4().hex[:8]
                     server.inserted_captions.append({"id": cid, **snippet, "bytes": len(body)})
+                    server.captions.setdefault(snippet.get("videoId"), []).append(
+                        {"id": cid, "snippet": {**snippet, "status": "serving", "trackKind": "standard"}})
                     return self._send(200, {"id": cid, "snippet": {**snippet, "status": "serving"}})
                 if path == "/upload/youtube/v3/thumbnails/set":
                     return self._send(200, {"items": [{"default": {"url": "https://i.ytimg.com/x.jpg"}}]})

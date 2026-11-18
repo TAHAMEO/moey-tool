@@ -64,3 +64,11 @@ def download(token: str, file_id: str, dest: Path, *, max_bytes: int) -> dict:
                     handle.write(chunk)
     tmp.replace(dest)
     return {"size": size, "sha256": digest.hexdigest()}
+
+
+def about(token: str) -> dict:
+    response = request("google_drive", "GET", f"{_api()}/about", params={"fields": "user(emailAddress,displayName)"},
+                       headers={"Authorization": f"Bearer {token}"})
+    if response.status_code != 200:
+        raise google_error(response)
+    return response.json().get("user", {})

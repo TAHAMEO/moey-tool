@@ -23,7 +23,7 @@ from sqlalchemy import select
 
 from ..brain.runtime import ChildSpec, await_approval, await_children, get_checkpointer, job_context, run_graph_job
 from ..db.base import session_scope, utcnow
-from ..db.models import Clip, MediaAsset, OutputPackage, Project, Render, Source, Strategy
+from ..db.models import Clip, MediaAsset, OutputPackage, Project, Render, Source
 from ..ingestion import acquire as acq
 from ..ingestion import resolver as rs
 from ..jobs.registry import JobContext, PermanentError, RetryableError, handler
@@ -74,10 +74,6 @@ def _fail(state: VideoState, message: str, *, code: str, label: str = "Failed") 
         project.status_label = label
         project.errors = [*project.errors, {"code": code, "message": message, "at": utcnow().isoformat()}]
     raise PermanentError(message, code=code, label=label)
-
-
-def _active_strategy(db) -> Strategy | None:
-    return db.execute(select(Strategy).where(Strategy.status == "active").order_by(Strategy.version.desc())).scalars().first()
 
 
 # -------------------------------------------------------------------- nodes
@@ -178,12 +174,14 @@ def select_node(state: VideoState, config) -> VideoState:
         has_video=prepared.get("has_video", True),
     )
     with session_scope() as db:
+        from ..learning.engine import assign_strategy
+
         project = db.get(Project, uuid.UUID(state["project_id"]))
         request = dict(project.request)
-        strategy = _active_strategy(db)
+        strategy, variant = assign_strategy(db, project.id)  # randomized while an experiment runs
         ai = app_settings.get_section(db, "ai")
-        params = strategy.params if strategy else {}
-        strategy_id = strategy.id if strategy else None
+        params = strategy.params or {}
+        strategy_id = strategy.id
         project.strategy_id = strategy_id
     interests = list(params.get("interests", []))
     try:
@@ -214,7 +212,7 @@ def select_node(state: VideoState, config) -> VideoState:
                             end_s=end, title=(cand.llm or {}).get("title") or "", hook=cand.hook,
                             transcript_text=cand.text, scores=cand.scores, total_score=cand.total,
                             reasons=cand.reasons + cand.adjusted, features=cand.features, scoring_method=cand.method,
-                            status="selected", strategy_id=strategy_id)
+                            status="selected", strategy_id=strategy_id, experiment_variant=variant)
                 db.add(clip)
                 db.flush()
                 clip_ids.append(str(clip.id))
@@ -321,8 +319,9 @@ def publish_node(state: VideoState, config) -> VideoState:
         ChildSpec(f"publish-{pid}", "workflow.publish", {"package_id": pid}, queue="default", max_attempts=3,
                   label="Publishing") for pid in state["approved"]
     ], label="Publishing approved clips")
-    published = [{"package_id": key.removeprefix("publish-"), "status": o.status, "result": o.result, "error": o.error}
-                 for key, o in outcomes.items()]
+    published = [{"package_id": key.removeprefix("publish-"),
+                  "status": "scheduled" if (o.result or {}).get("scheduled_at") else o.status,
+                  "result": o.result, "error": o.error} for key, o in outcomes.items()]
     return {"published": published}
 
 
@@ -395,6 +394,8 @@ def finalize_node(state: VideoState, config) -> VideoState:
             project.status, project.status_label = "completed", "Completed (transcript only)"
         elif not attempts:
             project.status, project.status_label = "ready", "Clips ready"
+        elif all(p["status"] == "scheduled" for p in attempts):
+            project.status, project.status_label = "scheduled", "Publishing scheduled"
         elif len(succeeded) == len(attempts):
             project.status, project.status_label = "published", "Published"
         else:
