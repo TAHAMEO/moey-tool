@@ -198,11 +198,15 @@ Section "CLIPFORGE" SecMain
     Return
   ${EndIf}
 
+  ${If} $Failed == "1"
+    Goto failed  ; no shortcuts to something that isn't installed yet
+  ${EndIf}
+
   ; Shortcuts
   CreateDirectory "$SMPROGRAMS\${APP}"
   CreateShortCut "$SMPROGRAMS\${APP}\${APP}.lnk" "powershell.exe" '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" open' "$INSTDIR\clipforge.ico" 0 SW_SHOWMINIMIZED
   CreateShortCut "$SMPROGRAMS\${APP}\Stop ${APP}.lnk" "powershell.exe" '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" stop' "$INSTDIR\clipforge.ico" 0 SW_SHOWMINIMIZED
-  CreateShortCut "$SMPROGRAMS\${APP}\${APP} watched folders.lnk" "$PROFILE\Videos\ClipForge"
+  CreateShortCut "$SMPROGRAMS\${APP}\${APP} watched folders.lnk" "$VIDEOS\ClipForge"  ; the Videos folder, wherever it is
   CreateShortCut "$SMPROGRAMS\${APP}\Uninstall ${APP}.lnk" "$INSTDIR\Uninstall.exe"
   ${If} $WantDesktop == ${BST_CHECKED}
     CreateShortCut "$DESKTOP\${APP}.lnk" "powershell.exe" '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" open' "$INSTDIR\clipforge.ico" 0 SW_SHOWMINIMIZED
@@ -216,6 +220,7 @@ Section "CLIPFORGE" SecMain
   ${EndIf}
 
   !insertmacro Step "start" "Step 7 of 7: starting CLIPFORGE"
+  failed:
   ${If} $Failed == "1"
     MessageBox MB_ICONSTOP "Setup could not finish. The details are listed above and saved in $INSTDIR\install.log.$\r$\n$\r$\nRunning setup again continues where it stopped." /SD IDOK
     SetDetailsView show

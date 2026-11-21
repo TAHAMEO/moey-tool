@@ -102,7 +102,7 @@ wsl -d ClipForge -- docker compose --project-directory /opt/clipforge logs --tai
 | Setup 0.2.0 stopped with "The term 'wsl.exe' is not recognized" right after turning on the Windows features | A bug in that version (it looked for WSL as a 32-bit program). Run **ClipForge-Setup-0.2.1.exe** or later: the features already turned on are kept; restart when it asks and it continues after you sign in |
 | Setup keeps asking to restart | Install *Windows Subsystem for Linux* from the Microsoft Store (or run Windows Update), restart, run setup again |
 | Port 3000 already in use | Another program uses it; quit that program, or change `CLIPFORGE_HTTP_PORT` in `/opt/clipforge/.env` inside the ClipForge environment and use that port |
-| CLIPFORGE didn't start in time | Use the CLIPFORGE shortcut again; the log is in `%LOCALAPPDATA%\ClipForge\clipforge.log` |
+| CLIPFORGE didn't start in time | Use the CLIPFORGE shortcut again; the log is `clipforge.log` in the installation folder |
 | Company network with a TLS-inspecting proxy | Setup's downloads use Windows' settings; builds inside Linux may need the proxy's CA — see [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Live streaming from OBS on the same PC | WSL forwards TCP but not UDP (SRT) to `localhost`; use a server for live ingest, or turn on WSL's mirrored networking (`networkingMode=mirrored` in `.wslconfig`, Windows 11 22H2+) |
 

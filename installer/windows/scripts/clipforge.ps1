@@ -29,7 +29,9 @@ $env:WSL_UTF8 = "1"
 $Distro = "ClipForge"
 $Url = "http://localhost:3000"
 $Provision = "/opt/clipforge/installer/windows/scripts/provision.sh"
-$Log = Join-Path $env:LOCALAPPDATA "ClipForge\clipforge.log"
+# The installation folder (setup lets you choose it): this script is in <folder>\app\installer\windows\scripts.
+$InstallDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
+$Log = Join-Path $InstallDir "clipforge.log"
 
 function Write-Log([string]$Message) {
   $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
