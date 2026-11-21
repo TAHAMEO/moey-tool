@@ -58,6 +58,16 @@ else
   say "Keeping the existing .env"
 fi
 
+# The folder CLIPFORGE watches for new videos (My Videos → Process a folder). Created here so it
+# belongs to you rather than to Docker. CLIPFORGE only reads it; to let it move processed videos
+# into a "Processed" sub-folder, give the container user write access: sudo chown -R 10001 inbox
+INBOX_HOST="$(grep -E '^CLIPFORGE_INBOX_HOST=' .env | tail -n1 | cut -d= -f2-)"
+INBOX_HOST="${INBOX_HOST:-./inbox}"
+if [[ ! -d "$INBOX_HOST" ]]; then
+  say "Creating the watched-folder inbox at $INBOX_HOST"
+  mkdir -p "$INBOX_HOST"
+fi
+
 if [[ -n "$EXTRA_CA" ]]; then
   [[ -f "$EXTRA_CA" ]] || fail "CA file not found: $EXTRA_CA"
   export CLIPFORGE_BUILD_CA_FILE="$(cd "$(dirname "$EXTRA_CA")" && pwd)/$(basename "$EXTRA_CA")"

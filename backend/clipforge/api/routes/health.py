@@ -76,15 +76,16 @@ def diagnostics(db: Session = Depends(get_db), _: Principal = Depends(admin)) ->
     checks["transcription_engines"] = engines_status()
     checks["memory"] = memory_check()
     from ...ingestion import public_download
+    from ...platforms import apps
 
     checks["downloader"] = public_download.available()
     settings = get_settings()
     checks["config"] = {
         "env": settings.env,
         "storage_backend": settings.storage_backend,
-        "google_app_configured": bool(settings.google_client_id and settings.google_client_secret),
+        "google_app_configured": apps.google_app(db) is not None,
         "youtube_api_key_configured": settings.youtube_api_key is not None,
-        "meta_app_configured": bool(settings.meta_app_id and settings.meta_app_secret),
+        "meta_app_configured": apps.meta_app(db) is not None,
         "public_base_url": settings.public_base_url,
     }
     return checks

@@ -1,9 +1,11 @@
-"""Google OAuth 2.0 (web server flow with PKCE) for YouTube and Google Drive.
+"""Google OAuth 2.0 (authorization code flow with PKCE) for YouTube and Google Drive.
 
-The owner creates an OAuth client in their own Google Cloud project (see
-docs/API_SETUP.md); CLIPFORGE never sees their Google password. Tokens are
-stored encrypted; refresh tokens are used automatically and revoked on
-disconnect.
+The OAuth app comes from :mod:`.apps` (saved in CLIPFORGE, built into this
+copy, or environment). A *desktop* app returns to CLIPFORGE on this computer
+(``http://localhost:<port>``) without any redirect registration; a *web* app
+returns to the registered public address. CLIPFORGE never sees the Google
+password. Tokens are stored encrypted; refresh tokens are used automatically
+and revoked on disconnect.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from ..config import get_settings
 from ..db.base import utcnow
 from ..db.models import OAuthState, PlatformQuotaUsage, SocialAccount
 from ..security.crypto import read_secret_json, store_secret, update_secret
+from . import apps
 from .http import PlatformError, request
 
 log = logging.getLogger(__name__)
@@ -45,27 +48,34 @@ class OAuthNotConfigured(RuntimeError):
     pass
 
 
-def configured() -> bool:
-    settings = get_settings()
-    return bool(settings.google_client_id and settings.google_client_secret)
+def configured(db: Session | None = None) -> bool:
+    return apps.google_app(db) is not None
 
 
-def redirect_uri() -> str:
-    return get_settings().public_base_url.rstrip("/") + "/api/connections/google/callback"
+def _app(db: Session) -> apps.GoogleApp:
+    app = apps.google_app(db)
+    if app is None:
+        raise PlatformError("google", "Google sign-in isn't set up any more. Set it up again in Settings → Accounts, "
+                                      "then reconnect.", reason="reauth")
+    return app
 
 
-def start(db: Session, user_id: uuid.UUID, purpose: str) -> str:
-    if not configured():
-        raise OAuthNotConfigured("Google OAuth client is not configured (CLIPFORGE_GOOGLE_CLIENT_ID/SECRET).")
+def start(db: Session, user_id: uuid.UUID, purpose: str, *, origin: str | None = None) -> str:
+    app = apps.google_app(db)
+    if app is None:
+        raise OAuthNotConfigured("Google sign-in isn't set up yet.")
     if purpose not in SCOPES:
         raise ValueError("Unknown Google connection purpose")
+    redirect, problem = apps.google_redirect(app, origin)
+    if problem:
+        raise OAuthNotConfigured(problem)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     state = f"google:{purpose}:{secrets.token_urlsafe(24)}"
-    db.add(OAuthState(state=state, provider="google", user_id=user_id, code_verifier=verifier, redirect_uri=redirect_uri()))
+    db.add(OAuthState(state=state, provider="google", user_id=user_id, code_verifier=verifier, redirect_uri=redirect))
     params = {
-        "client_id": get_settings().google_client_id,
-        "redirect_uri": redirect_uri(),
+        "client_id": app.client_id,
+        "redirect_uri": redirect,
         "response_type": "code",
         "scope": " ".join(SCOPES[purpose]),
         "access_type": "offline",
@@ -88,10 +98,9 @@ def finish(db: Session, state: str, code: str, user_id: uuid.UUID) -> tuple[str,
     if row is None or row.provider != "google" or row.user_id != user_id or row.created_at < utcnow() - STATE_TTL:
         raise PlatformError("google", "This sign-in link expired or was not started from this account. Please try again.")
     db.delete(row)
-    settings = get_settings()
+    app = _app(db)
     response = request("google", "POST", _token_url(), data={
-        "code": code, "client_id": settings.google_client_id,
-        "client_secret": settings.google_client_secret.get_secret_value(), "redirect_uri": row.redirect_uri,
+        "code": code, "client_id": app.client_id, "client_secret": app.client_secret, "redirect_uri": row.redirect_uri,
         "grant_type": "authorization_code", "code_verifier": row.code_verifier,
     })
     if response.status_code != 200:
@@ -99,6 +108,22 @@ def finish(db: Session, state: str, code: str, user_id: uuid.UUID) -> tuple[str,
     tokens = response.json()
     tokens["expires_at"] = (utcnow() + timedelta(seconds=int(tokens.get("expires_in", 3600)))).isoformat()
     return state.split(":")[1], tokens
+
+
+def check_app(app: apps.GoogleApp) -> tuple[bool | None, str]:
+    """Ask Google whether it knows this client (a deliberately invalid code: 'invalid_client' means it doesn't)."""
+    try:
+        response = request("google", "POST", _token_url(), max_attempts=1, data={
+            "code": "clipforge-credential-check", "client_id": app.client_id, "client_secret": app.client_secret,
+            "redirect_uri": "http://localhost", "grant_type": "authorization_code"})
+        error = response.json().get("error") if "json" in response.headers.get("content-type", "") else None
+    except (PlatformError, OSError, ValueError) as exc:
+        return None, f"Saved, but Google couldn't be reached to check it ({exc.__class__.__name__})."
+    if error in ("invalid_client", "unauthorized_client"):
+        return False, "Google doesn't recognise this client ID and secret. Copy both again from Google Cloud → Credentials."
+    if error in ("invalid_grant", "redirect_uri_mismatch", "invalid_request"):
+        return True, "Google recognised the app."
+    return None, f"Saved; Google's answer couldn't be interpreted ({error or response.status_code})."
 
 
 def save_account(db: Session, *, platform: str, external_id: str, display_name: str, tokens: dict, meta: dict) -> SocialAccount:
@@ -140,14 +165,14 @@ def access_token(db: Session, account: SocialAccount) -> str:
     if not tokens.get("refresh_token"):
         account.status = "reauth_required"
         raise PlatformError("google", "Google access expired and no refresh token is stored. Reconnect the account.", reason="reauth")
-    settings = get_settings()
+    app = _app(db)
     response = request("google", "POST", _token_url(), data={
-        "client_id": settings.google_client_id, "client_secret": settings.google_client_secret.get_secret_value(),
+        "client_id": app.client_id, "client_secret": app.client_secret,
         "refresh_token": tokens["refresh_token"], "grant_type": "refresh_token",
     })
     if response.status_code != 200:
         error = response.json().get("error") if response.headers.get("content-type", "").startswith("application/json") else None
-        if error == "invalid_grant":
+        if error in ("invalid_grant", "invalid_client", "unauthorized_client"):
             account.status = "reauth_required"
             raise PlatformError("google", "Google access was revoked or expired. Reconnect the account.", reason="reauth")
         raise PlatformError("google", f"Token refresh failed ({response.status_code})", retryable=response.status_code >= 500)

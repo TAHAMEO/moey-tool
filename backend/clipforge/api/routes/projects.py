@@ -79,9 +79,14 @@ def _project_summary(db: Session, p: Project) -> dict:
 
 
 @router.get("/projects")
-def list_projects(limit: int = 50, db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> list[dict]:
-    rows = db.execute(select(Project).order_by(Project.updated_at.desc()).limit(min(limit, 200))).scalars()
-    return [_project_summary(db, p) for p in rows]
+def list_projects(limit: int = 50, batch_id: uuid.UUID | None = None, db: Session = Depends(get_db),
+                  _: Principal = Depends(viewer)) -> list[dict]:
+    query = select(Project).order_by(Project.updated_at.desc()).limit(min(limit, 200))
+    if batch_id is not None:
+        from ...db.models import BatchItem
+
+        query = query.join(BatchItem, BatchItem.project_id == Project.id).where(BatchItem.batch_id == batch_id)
+    return [_project_summary(db, p) for p in db.execute(query).scalars()]
 
 
 @router.get("/projects/{project_id}")

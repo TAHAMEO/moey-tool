@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-3XNPYkni/4WbU8sYH43wJ4nIH2jKxiEvE+UhzNtQFW4='; style-src 'unsafe-inline'">
+<title>CLIPFORGE sign-in</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f7f7f8; --fg: #18181b; --muted: #6b6b76; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111114; --fg: #f4f4f5; --muted: #a1a1aa; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; box-sizing: border-box; }
+  main { max-width: 420px; text-align: center; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { margin: 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Finishing your Instagram sign-in…</h1>
+  <p id="msg">Taking you back to CLIPFORGE on this computer.</p>
+</main>
+<script>
+/*
+ * CLIPFORGE sign-in relay (static, no data stored, no network requests).
+ * Instagram only redirects to https:// addresses, so this page receives the sign-in result
+ * and forwards it to CLIPFORGE running on the SAME computer (http://localhost or 127.0.0.1).
+ * It never forwards anywhere else: the destination port is read from the sign-in "state",
+ * which CLIPFORGE created, and the host is fixed to the loopback address.
+ */
+(function () {
+  var query = new URLSearchParams(window.location.search);
+  var state = query.get("state") || "";
+  var parts = state.split(".");
+  var match = parts.length === 3 && parts[0] === "instagram" ? /^([li])([0-9]{1,5})$/.exec(parts[2]) : null;
+  var message = document.getElementById("msg");
+  var port = match ? parseInt(match[2], 10) : 0;
+  if (!match || port < 1 || port > 65535) {
+    message.textContent = "This sign-in didn't come from CLIPFORGE on this computer, so it was not forwarded. Start again from CLIPFORGE → Settings → Accounts.";
+    return;
+  }
+  var out = new URLSearchParams();
+  ["code", "state", "error", "error_reason", "error_description"].forEach(function (key) {
+    var value = query.get(key);
+    if (value !== null) out.set(key, value);
+  });
+  var host = match[1] === "l" ? "localhost" : "127.0.0.1";
+  window.location.replace("http://" + host + ":" + port + "/api/connections/instagram/callback?" + out.toString());
+})();
+</script>
+</body>
+</html>

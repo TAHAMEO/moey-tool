@@ -184,12 +184,13 @@ export function EmptyState({ icon, title, description, action }: { icon: ReactNo
   );
 }
 
-export function Modal({ open, onClose, title, children, footer }: {
+export function Modal({ open, onClose, title, children, footer, wide }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  wide?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -204,7 +205,8 @@ export function Modal({ open, onClose, title, children, footer }: {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="animate-fade-up max-h-[90vh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface shadow-card sm:max-w-lg sm:rounded-2xl"
+        className={clsx("animate-fade-up max-h-[90vh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface shadow-card sm:rounded-2xl",
+          wide ? "sm:max-w-2xl" : "sm:max-w-lg")}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">

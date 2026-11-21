@@ -30,6 +30,7 @@ from ..config import get_settings
 from ..db.base import utcnow
 from ..db.models import OAuthState, SocialAccount
 from ..security.crypto import read_secret_json, update_secret
+from . import apps
 from .http import PlatformError, meta_error, request
 
 AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize"
@@ -42,9 +43,16 @@ REEL_METRICS = ["views", "reach", "likes", "comments", "shares", "saved", "total
 log = logging.getLogger(__name__)
 
 
-def configured() -> bool:
-    settings = get_settings()
-    return bool(settings.meta_app_id and settings.meta_app_secret)
+def configured(db: Session | None = None) -> bool:
+    return apps.meta_app(db) is not None
+
+
+def _app(db: Session) -> apps.MetaApp:
+    app = apps.meta_app(db)
+    if app is None:
+        raise PlatformError("instagram", "Instagram sign-in isn't set up any more. Set it up again in Settings → Accounts.",
+                            reason="token")
+    return app
 
 
 def _base() -> str:
@@ -52,16 +60,26 @@ def _base() -> str:
     return f"{settings.instagram_graph_base.rstrip('/')}/{settings.instagram_api_version}"
 
 
-def redirect_uri() -> str:
-    return get_settings().public_base_url.rstrip("/") + "/api/connections/instagram/callback"
+def relay_target_code(target: str) -> str:
+    """Compact, relay-checkable form of where the relay page should forward to: l3000 = http://localhost:3000."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(target)
+    host = "l" if parts.hostname == "localhost" else "i"
+    return f"{host}{parts.port or 80}"
 
 
-def start(db: Session, user_id: uuid.UUID) -> str:
-    if not configured():
-        raise PlatformError("instagram", "Meta app is not configured (CLIPFORGE_META_APP_ID/SECRET).")
-    state = f"instagram:{secrets.token_urlsafe(24)}"
-    db.add(OAuthState(state=state, provider="instagram", user_id=user_id, redirect_uri=redirect_uri()))
-    params = {"client_id": get_settings().meta_app_id, "redirect_uri": redirect_uri(), "response_type": "code",
+def start(db: Session, user_id: uuid.UUID, *, origin: str | None = None) -> str:
+    app = apps.meta_app(db)
+    if app is None:
+        raise PlatformError("instagram", "Instagram sign-in isn't set up yet.")
+    redirect, target, problem = apps.instagram_redirect(app, origin)
+    if problem:
+        raise PlatformError("instagram", problem)
+    # The relay page (if any) reads where to forward from the state: only this computer is ever allowed.
+    state = f"instagram.{secrets.token_urlsafe(24)}" + (f".{relay_target_code(target)}" if target else "")
+    db.add(OAuthState(state=state, provider="instagram", user_id=user_id, redirect_uri=redirect))
+    params = {"client_id": app.app_id, "redirect_uri": redirect, "response_type": "code",
               "scope": ",".join(SCOPES), "state": state}
     return f"{AUTHORIZE_URL}?{urlencode(params)}"
 
@@ -72,15 +90,16 @@ def finish(db: Session, state: str, code: str, user_id: uuid.UUID) -> dict:
         raise PlatformError("instagram", "This sign-in link expired or was not started from this account. Please try again.")
     db.delete(row)
     settings = get_settings()
+    app = _app(db)
     code = code.split("#")[0]
     short = request("instagram", "POST", TOKEN_URL, data={
-        "client_id": settings.meta_app_id, "client_secret": settings.meta_app_secret.get_secret_value(),
+        "client_id": app.app_id, "client_secret": app.app_secret,
         "grant_type": "authorization_code", "redirect_uri": row.redirect_uri, "code": code})
     if short.status_code != 200:
         raise meta_error(short)
     short_data = short.json()
     long = request("instagram", "GET", f"{settings.instagram_graph_base.rstrip('/')}/access_token", params={
-        "grant_type": "ig_exchange_token", "client_secret": settings.meta_app_secret.get_secret_value(),
+        "grant_type": "ig_exchange_token", "client_secret": app.app_secret,
         "access_token": short_data["access_token"]})
     if long.status_code != 200:
         raise meta_error(long)

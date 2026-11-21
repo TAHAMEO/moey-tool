@@ -3,23 +3,28 @@
 Passwords are never handled: the owner signs in on Google's or Instagram's own
 page; CLIPFORGE receives an authorization code (bound to a single-use,
 user-bound, 15-minute ``state``) and stores the resulting tokens encrypted.
+
+Connecting is one click once the OAuth app is known (built into this copy, or
+saved once in Settings → Accounts — see platforms/apps.py). The sign-in runs in
+a popup that closes itself and tells the Settings page the result.
 """
 
 from __future__ import annotations
 
 import uuid
 from typing import Literal
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import get_settings
 from ...db.base import get_db
-from ...db.models import SocialAccount
-from ...platforms import drive, google, instagram, youtube
+from ...db.models import OAuthState, SocialAccount
+from ...platforms import apps, drive, google, instagram, youtube
 from ...platforms.http import PlatformError
 from ...security.audit import audit
 from ...security.crypto import delete_secret, store_secret
@@ -30,6 +35,24 @@ router = APIRouter(prefix="/connections", tags=["connections"])
 
 class GoogleStart(BaseModel):
     purpose: Literal["youtube", "google_drive"] = "youtube"
+    #: The browser's origin (window.location.origin): a Desktop-app client returns there.
+    origin: str | None = Field(None, max_length=100)
+
+
+class InstagramStart(BaseModel):
+    origin: str | None = Field(None, max_length=100)
+
+
+class GoogleAppIn(BaseModel):
+    client_id: str = Field(..., max_length=200)
+    client_secret: str = Field(..., max_length=200)
+    kind: Literal["web", "desktop"] = "desktop"
+
+
+class MetaAppIn(BaseModel):
+    app_id: str = Field(..., max_length=40)
+    app_secret: str = Field(..., max_length=200)
+    relay_url: str | None = Field(None, max_length=500)
 
 
 def _account(a: SocialAccount) -> dict:
@@ -39,24 +62,78 @@ def _account(a: SocialAccount) -> dict:
 
 
 @router.get("")
-def list_connections(db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> dict:
+def list_connections(origin: str | None = None, db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> dict:
     settings = get_settings()
     accounts = db.execute(select(SocialAccount).order_by(SocialAccount.connected_at)).scalars()
     return {
         "accounts": [_account(a) for a in accounts],
-        "apps": {
-            "google": {"configured": google.configured(), "redirect_uri": google.redirect_uri()},
-            "instagram": {"configured": instagram.configured(), "redirect_uri": instagram.redirect_uri()},
-            "youtube_api_key": settings.youtube_api_key is not None,
-        },
+        "apps": {**apps.status(db, origin), "youtube_api_key": settings.youtube_api_key is not None},
         "youtube_quota_remaining": google.quota_remaining(db),
     }
+
+
+# ------------------------------------------------------------ app set-up (once)
+@router.put("/apps/google")
+def save_google_app(body: GoogleAppIn, request: Request, db: Session = Depends(get_db),
+                    principal: Principal = Depends(admin)) -> dict:
+    """Save the Google OAuth client in CLIPFORGE (encrypted); used right away, no restart."""
+    try:
+        app = apps.save_google(db, client_id=body.client_id, client_secret=body.client_secret, kind=body.kind)
+    except ValueError as exc:
+        raise HTTPException(422, {"code": "invalid", "message": str(exc)}) from exc
+    verdict, detail = google.check_app(app)
+    if verdict is False:
+        db.rollback()
+        raise HTTPException(422, {"code": "rejected", "message": detail})
+    audit(db, "connection.app_saved", user_id=principal.id, target_type="oauth_app", target_id=None,
+          details={"provider": "google", "kind": body.kind, "verified": verdict}, ip=client_ip(request))
+    return {"ok": True, "verified": verdict, "detail": detail}
+
+
+@router.put("/apps/instagram")
+def save_instagram_app(body: MetaAppIn, request: Request, db: Session = Depends(get_db),
+                       principal: Principal = Depends(admin)) -> dict:
+    try:
+        apps.save_meta(db, app_id=body.app_id, app_secret=body.app_secret, relay_url=body.relay_url)
+    except ValueError as exc:
+        raise HTTPException(422, {"code": "invalid", "message": str(exc)}) from exc
+    audit(db, "connection.app_saved", user_id=principal.id, target_type="oauth_app", target_id=None,
+          details={"provider": "instagram", "relay": bool(body.relay_url)}, ip=client_ip(request))
+    return {"ok": True, "verified": None, "detail": "Saved. Instagram checks it when you connect."}
+
+
+@router.delete("/apps/{provider}")
+def forget_app(provider: Literal["google", "instagram"], request: Request, db: Session = Depends(get_db),
+               principal: Principal = Depends(admin)) -> dict:
+    apps.forget(db, provider)
+    audit(db, "connection.app_removed", user_id=principal.id, target_type="oauth_app", target_id=None,
+          details={"provider": provider}, ip=client_ip(request))
+    return {"ok": True}
+
+
+# --------------------------------------------------------------- landing pages
+def _landing(db: Session, state: str) -> str:
+    """Where the browser goes after the sign-in: the address it started from."""
+    row = db.get(OAuthState, state) if state else None
+    if row is not None:
+        parts = urlsplit(row.redirect_uri)
+        if apps.loopback_origin(f"{parts.scheme}://{parts.netloc}"):
+            return f"{parts.scheme}://{parts.netloc}"
+        target = state.rsplit(".", 1)[-1] if state.count(".") == 2 else ""
+        if target[:1] in ("l", "i") and target[1:].isdigit():
+            return f"http://{'localhost' if target[0] == 'l' else '127.0.0.1'}:{target[1:]}"
+    return get_settings().public_base_url.rstrip("/")
+
+
+def _done(origin: str, *, connected: str | None = None, error: str | None = None) -> RedirectResponse:
+    query = f"connected={connected}" if connected else f"error={quote((error or 'cancelled')[:160])}"
+    return RedirectResponse(f"{origin}/connected?{query}")
 
 
 @router.post("/google/start")
 def google_start(body: GoogleStart, db: Session = Depends(get_db), principal: Principal = Depends(admin)) -> dict:
     try:
-        return {"auth_url": google.start(db, principal.id, body.purpose)}
+        return {"auth_url": google.start(db, principal.id, body.purpose, origin=body.origin)}
     except google.OAuthNotConfigured as exc:
         raise HTTPException(400, {"code": "not_configured", "message": str(exc)}) from exc
 
@@ -64,9 +141,9 @@ def google_start(body: GoogleStart, db: Session = Depends(get_db), principal: Pr
 @router.get("/google/callback")
 def google_callback(request: Request, state: str = "", code: str = "", error: str = "",
                     db: Session = Depends(get_db), principal: Principal = Depends(current_principal)):
-    base = get_settings().public_base_url.rstrip("/")
+    base = _landing(db, state)
     if error or not code:
-        return RedirectResponse(f"{base}/settings?connection_error={error or 'cancelled'}#connections")
+        return _done(base, error=error or "cancelled")
     try:
         purpose, tokens = google.finish(db, state, code, principal.id)
         if purpose == "youtube":
@@ -82,16 +159,17 @@ def google_callback(request: Request, state: str = "", code: str = "", error: st
                                           display_name=user.get("displayName", "Google Drive"), tokens=tokens,
                                           meta={"email": user.get("emailAddress")})
     except PlatformError as exc:
-        return RedirectResponse(f"{base}/settings?connection_error={str(exc)[:120]}#connections")
+        return _done(base, error=str(exc))
     audit(db, "connection.add", user_id=principal.id, target_type="social_account", target_id=account.id,
           details={"platform": account.platform}, ip=client_ip(request))
-    return RedirectResponse(f"{base}/settings?connected={account.platform}#connections")
+    return _done(base, connected=account.platform)
 
 
 @router.post("/instagram/start")
-def instagram_start(db: Session = Depends(get_db), principal: Principal = Depends(admin)) -> dict:
+def instagram_start(body: InstagramStart | None = None, db: Session = Depends(get_db),
+                    principal: Principal = Depends(admin)) -> dict:
     try:
-        return {"auth_url": instagram.start(db, principal.id)}
+        return {"auth_url": instagram.start(db, principal.id, origin=body.origin if body else None)}
     except PlatformError as exc:
         raise HTTPException(400, {"code": "not_configured", "message": str(exc)}) from exc
 
@@ -99,9 +177,9 @@ def instagram_start(db: Session = Depends(get_db), principal: Principal = Depend
 @router.get("/instagram/callback")
 def instagram_callback(request: Request, state: str = "", code: str = "", error: str = "",
                        db: Session = Depends(get_db), principal: Principal = Depends(current_principal)):
-    base = get_settings().public_base_url.rstrip("/")
+    base = _landing(db, state)
     if error or not code:
-        return RedirectResponse(f"{base}/settings?connection_error={error or 'cancelled'}#connections")
+        return _done(base, error=error or "cancelled")
     try:
         tokens = instagram.finish(db, state, code, principal.id)
         profile = instagram.me(tokens["access_token"])
@@ -121,10 +199,10 @@ def instagram_callback(request: Request, state: str = "", code: str = "", error:
         account.status = "connected"
         account.meta = {"username": profile.get("username"), "account_type": profile.get("account_type")}
     except PlatformError as exc:
-        return RedirectResponse(f"{base}/settings?connection_error={str(exc)[:120]}#connections")
+        return _done(base, error=str(exc))
     audit(db, "connection.add", user_id=principal.id, target_type="social_account", target_id=account.id,
           details={"platform": "instagram"}, ip=client_ip(request))
-    return RedirectResponse(f"{base}/settings?connected=instagram#connections")
+    return _done(base, connected="instagram")
 
 
 @router.delete("/{account_id}")

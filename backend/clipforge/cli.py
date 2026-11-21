@@ -197,10 +197,16 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     results.append(("permanent memory", memory["ok"], memory.get("error", "pgvector store and history readable"), True))
     usage = shutil.disk_usage(settings.data_dir)
     results.append(("disk", usage.free > 5 * 1024**3, f"{usage.free / 1024**3:.1f} GB free in {settings.data_dir}", False))
-    results.append(("google app", bool(settings.google_client_id and settings.google_client_secret),
-                    "needed for YouTube publishing", False))
-    results.append(("meta app", bool(settings.meta_app_id and settings.meta_app_secret),
-                    "needed for Instagram publishing", False))
+    from .platforms import apps
+
+    with session_scope() as db:
+        google_app, meta_app = apps.google_app(db), apps.meta_app(db)
+    results.append(("google app", google_app is not None,
+                    f"{google_app.kind} client ({google_app.source})" if google_app
+                    else "set it up in Settings → Accounts to connect YouTube", False))
+    results.append(("meta app", meta_app is not None,
+                    f"Instagram app ({meta_app.source}{', relay' if meta_app.relay_url else ''})" if meta_app
+                    else "set it up in Settings → Accounts to connect Instagram", False))
     from urllib.parse import urlsplit
 
     public = urlsplit(settings.public_base_url)

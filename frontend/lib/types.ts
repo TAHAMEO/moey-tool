@@ -235,9 +235,19 @@ export type SocialAccount = {
   id: string; platform: "youtube" | "instagram" | "google_drive"; display_name: string; external_id: string; status: string;
   scopes: string[]; connected_at: string; token_expires_at: string | null; meta: Record<string, string | null>;
 };
+export type AppSource = "saved" | "built_in" | "env" | null;
+export type GoogleAppStatus = {
+  configured: boolean; source: AppSource; kind: "web" | "desktop" | null; client_id: string | null;
+  redirect_uri: string | null; problem: string | null; web_redirect_uri: string;
+};
+export type InstagramAppStatus = {
+  configured: boolean; source: AppSource; app_id: string | null; relay_url: string | null; redirect_uri: string | null;
+  relay_target: string | null; problem: string | null; direct_redirect_uri: string; https: boolean;
+};
+
 export type ConnectionsResponse = {
   accounts: SocialAccount[];
-  apps: { google: { configured: boolean; redirect_uri: string }; instagram: { configured: boolean; redirect_uri: string }; youtube_api_key: boolean };
+  apps: { google: GoogleAppStatus; instagram: InstagramAppStatus; youtube_api_key: boolean };
   youtube_quota_remaining: number;
 };
 
@@ -274,4 +284,28 @@ export type AnalyticsSummary = {
 export type PublicationAnalytics = {
   id: string; platform: string; status: string; title: string; url: string | null; published_at: string | null; last_error: string | null;
   snapshots: { at: string; age_hours: number; metrics: Record<string, number>; unavailable: Record<string, string> }[];
+};
+
+export type BatchRecipe = {
+  instruction: string; count: number | null; min_seconds?: number | null; max_seconds?: number | null;
+  platforms: ("youtube" | "instagram")[]; aspects?: string[] | null; caption_style?: string | null; focus?: string | null;
+  publish: "drafts" | "approve" | "auto"; privacy: "private" | "unlisted" | "public" | null;
+  schedule: { mode: "now" | "slots"; times: string[]; start_date: string | null };
+};
+
+export type WatchFolderInfo = {
+  id: string; name: string; path: string; enabled: boolean; include_subfolders: boolean; after_processing: "keep" | "move";
+  last_scan_at: string | null; last_error: string | null; waiting_files: number; batch_id: string | null;
+};
+
+export type BatchSummary = {
+  id: string; name: string; origin: "upload" | "folder"; status: "open" | "running" | "paused" | "completed" | "cancelled";
+  recipe: BatchRecipe; recipe_summary: string; next_slot: string | null; created_at: string;
+  counts: { total: number; waiting: number; processing: number; ready: number; scheduled: number; published: number; attention: number; skipped: number };
+  folder: WatchFolderInfo | null;
+};
+
+export type FolderListing = {
+  root: string; path: string; exists: boolean; writable: boolean; videos: number;
+  folders: { name: string; path: string; videos: number }[]; watched: WatchFolderInfo[];
 };

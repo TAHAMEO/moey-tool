@@ -314,7 +314,7 @@ def package_node(state: VideoState, config) -> VideoState:
                     db.add(package)
                 package.render_id = vertical.id
                 package.metadata_method = copy.method
-                package.privacy = publishing.default_privacy
+                package.privacy = project.request.get("privacy") or publishing.default_privacy
                 if platform == "youtube":
                     package.title = copy.youtube_title
                     package.description = copy.youtube_description
@@ -346,11 +346,23 @@ def _requested_schedule(state: VideoState, packages: list[dict], approved: list[
 
     with session_scope() as db:
         project = db.get(Project, uuid.UUID(state["project_id"]))
-        wanted = (project.request or {}).get("schedule") or {}
-        if not wanted.get("at") or not approved:
+        request = project.request or {}
+        wanted = request.get("schedule") or {}
+        slots = bool(request.get("schedule_slots") and request.get("batch_id"))
+        if not (wanted.get("at") or slots) or not approved:
             return approved, []
         chosen = [p for p in packages if p["package_id"] in approved]
         pending = [p for p in chosen if db.get(OutputPackage, uuid.UUID(p["package_id"])).status != "scheduled"]
+        if slots:
+            # A batch posts on its own timetable (e.g. one clip a day at 18:00), shared by all its videos.
+            from ..batches import service as batches
+
+            entries = [(db.get(OutputPackage, uuid.UUID(p["package_id"])), int(p.get("rank") or 0)) for p in pending]
+            times, problems = batches.allocate_slots(db, uuid.UUID(request["batch_id"]), entries)
+            kept = [pid for pid in approved if pid in times or pid not in {p["package_id"] for p in pending}]
+            for problem in problems:
+                jobs_queue.add_event(db, job_context(config).job_id, problem, level="warning", stage="publish")
+            return kept, problems
         ranks = sorted({int(p.get("rank") or 0) for p in pending})
         slots = schedule.plan(datetime.fromisoformat(wanted["at"]), len(ranks), wanted.get("every_minutes"))
         kept, notes = list(approved), []
@@ -372,15 +384,20 @@ def publish_gate_node(state: VideoState, config) -> VideoState:
         project = db.get(Project, uuid.UUID(state["project_id"]))
         publishing = app_settings.get_section(db, "publishing")
         requested = bool(project.request.get("publish_requested"))
-    packages = [p for p in state.get("packages", []) if p["platform"] in publishing.platforms]
-    if not packages or publishing.policy == "draft_only" or not (requested or publishing.policy == "auto_publish"):
+    # A batch recipe can name its own platforms; the global platform list still applies to everything else.
+    allowed = set(publishing.platforms) | set(project.request.get("platforms") or []) if project.request.get("batch_id") \
+        else set(publishing.platforms)
+    packages = [p for p in state.get("packages", []) if p["platform"] in allowed]
+    auto = publishing.policy == "auto_publish" or bool(project.request.get("auto_publish"))
+    if not packages or publishing.policy == "draft_only" or not (requested or auto):
         return {"approved": []}
     access = state.get("access") or {}
     third_party = access.get("method") == "public_download" and not access.get("owned")
     blocked = [p for p in packages if not p["qc_passed"] or p["review_words"] or third_party]
-    if publishing.policy == "auto_publish" and not blocked:
+    if auto and not blocked:
         approved, notes = _requested_schedule(state, packages, [p["package_id"] for p in packages], config)
-        return {"approved": approved, "notes": ["Auto-publish policy: approved automatically", *notes]}
+        why = "Batch set to post automatically" if project.request.get("auto_publish") else "Auto-publish policy"
+        return {"approved": approved, "notes": [f"{why}: approved automatically", *notes]}
     _set_project(state["project_id"], status="awaiting_approval", label="Waiting for your approval")
     decision = await_approval({"packages": packages, "project_id": state["project_id"],
                                "schedule": _schedule_hint(state["project_id"]),
@@ -495,6 +512,14 @@ def finalize_node(state: VideoState, config) -> VideoState:
         else:
             project.status = "partially_published"
             project.status_label = f"Published {len(succeeded)}, {len(attempts) - len(succeeded)} failed"
+        if (project.request or {}).get("batch_id"):
+            from ..batches import service as batches
+            from ..db.models import Batch
+
+            batch = db.get(Batch, uuid.UUID(project.request["batch_id"]))
+            if batch is not None:
+                db.flush()
+                batches.refresh_status(db, batch)
     return {"outcome": state.get("outcome") or "completed",
             "notes": [f"{clip_count} clip(s); {len(succeeded)}/{len(attempts)} publication(s) succeeded"]}
 

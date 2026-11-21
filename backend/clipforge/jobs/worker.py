@@ -45,6 +45,7 @@ DEFAULT_SCHEDULES = [
     ("maintenance-cleanup", "maintenance.cleanup", 6 * 3600),
     ("oauth-refresh", "maintenance.refresh_tokens", 3600),
     ("publish-scheduled", "maintenance.publish_scheduled", 5 * 60),
+    ("folders-scan", "folders.scan", 60),
     ("backup-daily", "maintenance.backup", 24 * 3600),
 ]
 
@@ -72,6 +73,15 @@ def seed_schedules() -> None:
                        .on_conflict_do_nothing(index_elements=["name"]))
 
 
+def _worth_running(db, job_type: str) -> bool:
+    """Skip routine checks that have nothing to look at (no watched folders → no folder scans)."""
+    if job_type == "folders.scan":
+        from ..db.models import WatchFolder
+
+        return db.execute(select(WatchFolder.id).where(WatchFolder.enabled.is_(True)).limit(1)).first() is not None
+    return True
+
+
 def run_due_schedules() -> int:
     created = 0
     with session_scope() as db:
@@ -80,6 +90,9 @@ def run_due_schedules() -> int:
             .with_for_update(skip_locked=True)
         ).scalars().all()
         for schedule in due:
+            if not _worth_running(db, schedule.job_type):
+                schedule.next_run_at = utcnow() + timedelta(seconds=schedule.interval_seconds)
+                continue
             if schedule.job_type in HANDLERS:
                 queue.enqueue(db, schedule.job_type, schedule.payload, queue=HANDLERS[schedule.job_type].queue,
                               dedupe_key=f"schedule:{schedule.name}", priority=200, max_attempts=2)

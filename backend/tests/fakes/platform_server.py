@@ -37,6 +37,10 @@ class FakePlatforms:
         self.analytics_rows: dict[str, list] = {}
         self.ig_insights: dict[str, dict] = {}
         self.video_updates: list[dict] = []
+        self.google_clients = {("cid", "csecret")}
+        self.google_code = "4/good-code"
+        self.instagram_code = "AQ-good-code"
+        self.token_requests: list[dict] = []
         self.publish_calls: list[float] = []  # time.time() of each Instagram media_publish
         server = self
 
@@ -98,6 +102,8 @@ class FakePlatforms:
                 # ------------------------------------------------- Instagram
                 if m := re.fullmatch(r"/v[\d.]+/(\d+)/media", path):
                     return self._send(200, {"data": server.ig_media, "paging": {"cursors": {"after": None}}})
+                if path == "/access_token" and q.get("grant_type") == "ig_exchange_token":
+                    return self._send(200, {"access_token": "IGQlong", "token_type": "bearer", "expires_in": 5183944})
                 if path.endswith("/me"):
                     return self._send(200, {"user_id": server.ig_user_id, "username": "owner_reels", "account_type": "BUSINESS"})
                 if m := re.fullmatch(r"/v[\d.]+/(\d+)/content_publishing_limit", path):
@@ -134,7 +140,21 @@ class FakePlatforms:
                 path, q, body = self._route("POST")
                 form = {k: v[0] for k, v in parse_qs(body.decode(errors="ignore")).items()} if body and b"=" in body[:200] else {}
                 if path == "/token":
+                    if form.get("client_id") and (form.get("client_id"), form.get("client_secret")) not in server.google_clients:
+                        return self._send(401, {"error": "invalid_client", "error_description": "Unauthorized"})
+                    if form.get("grant_type") == "authorization_code":
+                        if form.get("code") != server.google_code:
+                            return self._send(400, {"error": "invalid_grant", "error_description": "Malformed auth code."})
+                        server.token_requests.append(form)
+                        return self._send(200, {"access_token": "ya29.new", "refresh_token": "1//refresh", "expires_in": 3599,
+                                                "scope": "https://www.googleapis.com/auth/youtube.upload", "token_type": "Bearer"})
                     return self._send(200, {"access_token": "ya29.refreshed", "expires_in": 3600, "token_type": "Bearer"})
+                if path == "/oauth/access_token":  # Instagram Login: code -> short-lived token
+                    server.token_requests.append(form)
+                    if form.get("code") != server.instagram_code:
+                        return self._send(400, {"error_type": "OAuthException", "code": 400, "error_message": "Invalid code"})
+                    return self._send(200, {"access_token": "IGQshort", "user_id": int(server.ig_user_id),
+                                            "permissions": ["instagram_business_basic", "instagram_business_content_publish"]})
                 if path == "/upload/youtube/v3/videos" and q.get("uploadType") == "resumable":
                     if server.quota_exceeded:
                         return self._send(403, {"error": {"code": 403, "message": "quota", "errors": [{"reason": "quotaExceeded"}]}})

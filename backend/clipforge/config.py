@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     max_source_duration_hours: float = 6.0
     #: Root of the folders CLIPFORGE may watch for new videos (default: <data_dir>/inbox).
     inbox_dir: Path | None = None
+    #: How that folder is called on the owner's computer (shown in the app), e.g. C:\Users\me\Videos\ClipForge.
+    inbox_display: str | None = None
     #: How often watched folders are checked for new videos.
     folder_scan_seconds: int = 60
     ffmpeg_threads: int = 0
@@ -105,6 +107,12 @@ class Settings(BaseSettings):
     meta_app_id: str | None = None
     meta_app_secret: SecretStr | None = None
     meta_client_token: SecretStr | None = None
+    #: web: redirect registered in Google Cloud · desktop: installed-app client (loopback redirect)
+    google_client_kind: str = "web"
+    #: HTTPS page that forwards Instagram's sign-in result to CLIPFORGE on this computer (optional)
+    instagram_relay_url: str | None = None
+    #: OAuth apps built into this copy (see docs/ONE_CLICK_CONNECT.md); also looked for in /config
+    oauth_apps_file: Path | None = None
     instagram_graph_base: str = "https://graph.instagram.com"
     instagram_api_version: str = "v24.0"
     google_api_base: str = "https://www.googleapis.com"

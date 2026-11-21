@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from ..config import get_settings
 from ..db.base import session_scope, utcnow
 from ..db.models import (
+    Job,
     LLMCache,
     MediaAsset,
     OAuthState,
@@ -63,7 +64,10 @@ def cleanup(ctx: JobContext) -> dict:
         # one of their publications is still in progress.
         render_cutoff = utcnow() - timedelta(days=retention.keep_renders_days)
         busy = set(db.execute(select(OutputPackage.clip_id).join(Publication, Publication.package_id == OutputPackage.id)
-                              .where(Publication.status.notin_(("published", "failed")))).scalars())
+                              .where(Publication.status.notin_(("published", "failed", "cancelled")))).scalars())
+        # Clips waiting for their scheduled time keep their files too.
+        busy |= set(db.execute(select(OutputPackage.clip_id).where(OutputPackage.status.in_(("scheduled", "approved"))))
+                    .scalars())
         for render in db.execute(select(Render).where(Render.status == "done", Render.created_at < render_cutoff)).scalars():
             if render.clip_id in busy:
                 continue
@@ -82,6 +86,13 @@ def cleanup(ctx: JobContext) -> dict:
         removed["sessions"] = db.execute(delete(UserSession).where(UserSession.expires_at < utcnow())).rowcount
         removed["oauth_states"] = db.execute(delete(OAuthState).where(OAuthState.created_at < utcnow() - timedelta(hours=1))).rowcount
         removed["cache"] = db.execute(delete(LLMCache).where(LLMCache.expires_at < utcnow())).rowcount
+        # Routine background checks (folder scans, schedule checks, …) leave a finished job every few
+        # minutes; keep a week of them. Jobs that belong to a project are kept with the project.
+        removed["routine_jobs"] = db.execute(delete(Job).where(
+            Job.project_id.is_(None), Job.parent_id.is_(None), Job.status.in_(("completed", "cancelled")),
+            Job.finished_at < utcnow() - timedelta(days=7),
+            Job.type.in_(("folders.scan", "maintenance.publish_scheduled", "maintenance.cleanup",
+                          "maintenance.refresh_tokens", "analytics.collect_due", "learning.run")))).rowcount
     return removed
 
 

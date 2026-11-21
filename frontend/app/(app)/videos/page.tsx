@@ -1,11 +1,13 @@
 "use client";
 
-import { Clapperboard } from "lucide-react";
+import { Clapperboard, FolderInput } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { AccessBadge, StatusBadge } from "@/components/status";
-import { EmptyState, PageHeader, Skeleton, Tabs } from "@/components/ui";
+import { Button, EmptyState, PageHeader, Skeleton, Tabs } from "@/components/ui";
+import { BatchesPanel, FolderBatchDialog } from "@/components/videos/FolderBatch";
 import { timeAgo } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { ProjectSummary } from "@/lib/types";
 
@@ -20,14 +22,21 @@ const FILTERS: Record<Filter, (p: ProjectSummary) => boolean> = {
 };
 
 export default function VideosPage() {
-  const { data, loading } = useResource<ProjectSummary[]>("/projects?limit=200", { poll: 8000 });
+  const { can } = useAuth();
+  const [batch, setBatch] = useState<string | null>(null);
+  const [folderDialog, setFolderDialog] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { data, loading } = useResource<ProjectSummary[]>(`/projects?limit=200${batch ? `&batch_id=${batch}` : ""}`, { poll: 8000 });
   const [filter, setFilter] = useState<Filter>("all");
   const items = (data ?? []).filter(FILTERS[filter]);
   const count = (f: Filter) => (data ?? []).filter(FILTERS[f]).length;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      <PageHeader title="My Videos" description="Every source you've sent, the clips made from it, and where they were published." />
+      <PageHeader title="My Videos" description="Every source you've sent, the clips made from it, and where they were published."
+        action={can("editor") ? <Button icon={<FolderInput className="size-4" />} onClick={() => setFolderDialog(true)}>Process a folder</Button> : undefined} />
+      <BatchesPanel refreshKey={refreshKey} onFilter={setBatch} activeFilter={batch} />
+      <FolderBatchDialog open={folderDialog} onClose={() => setFolderDialog(false)} onStarted={() => setRefreshKey((k) => k + 1)} />
       <Tabs value={filter} onChange={setFilter} tabs={[
         { value: "all", label: "All", count: count("all") }, { value: "active", label: "In progress", count: count("active") },
         { value: "ready", label: "Ready", count: count("ready") }, { value: "published", label: "Published", count: count("published") },

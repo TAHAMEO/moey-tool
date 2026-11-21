@@ -1,5 +1,7 @@
 # Runtime data (media, models, keys, backups) — never committed
 var/
+/inbox/
+config/oauth-apps.json
 *.part
 .env
 .env.*

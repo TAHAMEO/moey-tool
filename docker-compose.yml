@@ -19,12 +19,19 @@ x-backend-image: &backend-image
   restart: unless-stopped
   volumes:
     - clipforge-data:/data
+    # Watched folders (My Videos → Process a folder). Your own folder on this computer;
+    # CLIPFORGE only reads it unless you ask it to move processed videos.
+    - ${CLIPFORGE_INBOX_HOST:-./inbox}:/inbox
+    # Optional built-in Google/Instagram apps for one-click Connect (config/oauth-apps.json).
+    - ./config:/config:ro
 
 x-common-env: &common-env
   CLIPFORGE_ENV: production
   CLIPFORGE_DATABASE_URL: postgresql+psycopg://clipforge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/clipforge
   CLIPFORGE_REDIS_URL: redis://redis:6379/0
   CLIPFORGE_DATA_DIR: /data
+  CLIPFORGE_INBOX_DIR: /inbox
+  CLIPFORGE_INBOX_DISPLAY: ${CLIPFORGE_INBOX_DISPLAY:-}
   CLIPFORGE_PUBLIC_BASE_URL: ${CLIPFORGE_PUBLIC_BASE_URL:-http://localhost:3000}
   CLIPFORGE_COOKIE_SECURE: ${CLIPFORGE_COOKIE_SECURE:-}
   CLIPFORGE_LOG_LEVEL: ${CLIPFORGE_LOG_LEVEL:-INFO}
