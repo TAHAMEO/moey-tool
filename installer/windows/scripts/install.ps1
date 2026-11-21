@@ -80,10 +80,12 @@ function Invoke-Native([string]$File, [string[]]$Arguments) {
   # Streams the program's output line by line into the installer window and the log.
   # Windows PowerShell 5.1 turns every line a program writes to stderr into an error record; with
   # "Stop" the first one (Docker's build progress, for example) would abort setup. Not here.
+  # "@() |" gives the program an input that has already ended: setup.exe hands this script an input
+  # that never ends, and a program asking a question would otherwise wait for an answer forever.
   $previous = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    & $File @Arguments 2>&1 | ForEach-Object {
+    @() | & $File @Arguments 2>&1 | ForEach-Object {
       $text = ("$_" -replace "`0", "").TrimEnd()
       if ($text) { Say "   $text" }
     }
@@ -93,16 +95,51 @@ function Invoke-Native([string]$File, [string[]]$Arguments) {
   }
 }
 
-function Invoke-Quiet([string]$File, [string[]]$Arguments) {
-  # Runs a program for its exit code and output lines only (nothing is shown).
-  $previous = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
-  try {
-    $lines = & $File @Arguments 2>$null
-    return @{ Code = $LASTEXITCODE; Lines = @($lines | ForEach-Object { ("$_" -replace "`0", "").Trim() }) }
-  } finally {
-    $ErrorActionPreference = $previous
+function ConvertTo-ArgumentLine([string[]]$Arguments) {
+  # Quotes arguments the way Windows programs split their command line.
+  $quoted = foreach ($argument in $Arguments) {
+    if ($argument -ne "" -and $argument -notmatch '[\s"]') { $argument; continue }
+    $escaped = $argument -replace '(\\*)"', '$1$1\"'   # backslashes before a quote are doubled, the quote escaped
+    $escaped = $escaped -replace '(\\+)$', '$1$1'      # and so are backslashes before the closing quote
+    '"' + $escaped + '"'
   }
+  return ($quoted -join " ")
+}
+
+function Invoke-Limited([string]$File, [string[]]$Arguments, [int]$Seconds, [switch]$Quiet) {
+  # For WSL's own commands: an input that has already ended (no question can wait for an answer)
+  # and a time limit, so setup never hangs on one. Output is shown once the program has finished.
+  # Returns @{ Code; Lines; TimedOut }.
+  $info = New-Object System.Diagnostics.ProcessStartInfo
+  $info.FileName = $File
+  $info.Arguments = ConvertTo-ArgumentLine $Arguments
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.RedirectStandardInput = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $info.StandardOutputEncoding = [Text.Encoding]::UTF8
+  $info.StandardErrorEncoding = [Text.Encoding]::UTF8
+  $process = [System.Diagnostics.Process]::Start($info)
+  try { $process.StandardInput.Close() } catch { }  # the input ends at once (it may already be gone)
+  $reads = @($process.StandardOutput.ReadToEndAsync(), $process.StandardError.ReadToEndAsync())
+  $timedOut = -not $process.WaitForExit($Seconds * 1000)
+  if ($timedOut) {
+    try { $process.Kill() } catch { }
+    [void]$process.WaitForExit(10000)
+  }
+  [void][System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]$reads, 10000)
+  $lines = @()
+  foreach ($read in $reads) {
+    if ($read.Status -ne "RanToCompletion") { continue }  # a program left behind still holds it open
+    $lines += @(($read.Result -replace "`0", "") -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  }
+  if (-not $Quiet) { foreach ($line in $lines) { Say "   $line" } }
+  if ($timedOut) {
+    Say "   ($([IO.Path]::GetFileName($File)) $($Arguments -join ' ') did not finish within $Seconds seconds and was stopped)"
+    return @{ Code = 1460; Lines = $lines; TimedOut = $true }
+  }
+  return @{ Code = $process.ExitCode; Lines = $lines; TimedOut = $false }
 }
 
 function Get-WslPath {
@@ -123,16 +160,17 @@ function Get-Wsl {
   return $wsl
 }
 
-function Invoke-Wsl([string[]]$Arguments) {
+function Invoke-Wsl([string[]]$Arguments, [int]$Seconds = 1200) {
+  # WSL's own commands (install, update, settings). Returns the exit code.
   $wsl = Get-WslPath
   if (-not $wsl) { return 9009 }  # like "command not found"
-  return Invoke-Native $wsl $Arguments
+  return (Invoke-Limited $wsl $Arguments $Seconds).Code
 }
 
 function Test-DistroExists {
   $wsl = Get-WslPath
   if (-not $wsl) { return $false }
-  $result = Invoke-Quiet $wsl @("--list", "--quiet")
+  $result = Invoke-Limited $wsl @("--list", "--quiet") 120 -Quiet
   if ($result.Code -ne 0) { return $false }
   return ($result.Lines -contains $Distro)
 }
@@ -240,6 +278,22 @@ function Step-Check {
   }
   if ($seconds -gt 60) { Stop-Install "A program started in the background kept setup waiting for $seconds seconds." }
   Say "   Background start check OK ($seconds s)"
+  # A program that reads its input until it ends (findstr) must not wait: its input has already ended.
+  $started = Get-Date
+  [void](Invoke-Native "findstr.exe" @("clipforge"))
+  $limited = Invoke-Limited "findstr.exe" @("clipforge") 60 -Quiet
+  $seconds = [int]((Get-Date) - $started).TotalSeconds
+  if ($seconds -gt 30 -or $limited.TimedOut) { Stop-Install "A program waiting for input kept setup waiting for $seconds seconds." }
+  Say "   Input check OK ($seconds s)"
+  # The time limit stops a program that doesn't finish.
+  $started = Get-Date
+  $slow = Invoke-Limited "ping.exe" @("-n", "60", "127.0.0.1") 5 -Quiet
+  $seconds = [int]((Get-Date) - $started).TotalSeconds
+  if (-not $slow.TimedOut -or $seconds -gt 30) { Stop-Install "The time limit did not stop a slow program ($seconds s)." }
+  Say "   Time limit check OK ($seconds s)"
+  $quoted = ConvertTo-ArgumentLine @("plain", "with space", 'C:\dir with space\', 'say "hi"', "")
+  if ($quoted -ne 'plain "with space" "C:\dir with space\\" "say \"hi\"" ""') { Stop-Install "Argument quoting check failed: $quoted" }
+  Say "   Argument quoting check OK"
 }
 
 function Step-Preflight {
@@ -274,7 +328,7 @@ function Test-ModernWsl {
   # The current WSL (from the Store or its MSI) answers --version; the old built-in one of early Windows 10 doesn't.
   $wsl = Get-WslPath
   if (-not $wsl) { return $false }
-  return (Invoke-Quiet $wsl @("--version")).Code -eq 0
+  return (Invoke-Limited $wsl @("--version") 120 -Quiet).Code -eq 0
 }
 
 function Install-WslMsi {
@@ -337,7 +391,7 @@ function Step-Wsl {
     Request-Restart "WSL is not ready yet; a restart usually finishes its installation."
   }
   Remove-Item $marker -Force -ErrorAction SilentlyContinue
-  [void](Invoke-Wsl @("--set-default-version", "2"))
+  [void](Invoke-Wsl @("--set-default-version", "2") 300)
   Say "   WSL 2 is ready"
 }
 
@@ -358,7 +412,7 @@ function Step-Distro {
   Say "Creating the ClipForge Linux environment"
   $target = Join-Path $InstallDir "wsl"
   New-Item -ItemType Directory -Force -Path $target | Out-Null
-  $code = Invoke-Native (Get-Wsl) @("--import", $Distro, $target, $tarball, "--version", "2")
+  $code = (Invoke-Limited (Get-Wsl) @("--import", $Distro, $target, $tarball, "--version", "2") 1800).Code
   Remove-Item $tarball -Force -ErrorAction SilentlyContinue
   if ($code -ne 0) { Stop-Install "WSL could not create the Linux environment (wsl --import exit code $code). If virtualization is off in the BIOS/UEFI, turn it on." }
   Configure-WslMemory
@@ -384,7 +438,7 @@ function Step-System {
   $code = Invoke-InDistro @("bash", $script, "system")
   if ($code -ne 0) { Stop-Install "Installing Docker Engine failed (exit code $code)." }
   # Restart the environment so systemd (and with it Docker) starts automatically from now on.
-  [void](Invoke-Quiet (Get-Wsl) @("--terminate", $Distro))
+  [void](Invoke-Limited (Get-Wsl) @("--terminate", $Distro) 120 -Quiet)
 }
 
 function Step-App {

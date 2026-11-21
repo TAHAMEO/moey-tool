@@ -63,7 +63,7 @@ function Invoke-Wsl([string[]]$Arguments) {
   $previous = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    $lines = & $Wsl @Arguments 2>&1
+    $lines = @() | & $Wsl @Arguments 2>&1  # an input that has already ended: nothing can wait for an answer
     return @{ Code = $LASTEXITCODE; Lines = @($lines | ForEach-Object { ("$_" -replace "`0", "").Trim() }) }
   } finally {
     $ErrorActionPreference = $previous

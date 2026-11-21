@@ -48,15 +48,27 @@ jobs:
       - name: Preflight checks on a real Windows machine
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step preflight -InstallDir "$env:RUNNER_TEMP\ClipForge"
-      - name: Started from 32-bit PowerShell (as setup.exe does), the scripts continue as 64-bit
+      - name: Started like setup.exe starts it (32-bit, input that never ends), the script switches to 64-bit and never waits on a program
         shell: powershell
         run: |
           foreach ($ps in @("$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe", "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe")) {
             "== $ps"
-            $out = & $ps -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step check -InstallDir "$env:RUNNER_TEMP\check" | Out-String
-            $code = $LASTEXITCODE
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = $ps
+            $info.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PWD\installer\windows\scripts\install.ps1`" -Step check -InstallDir `"$env:RUNNER_TEMP\check`""
+            $info.UseShellExecute = $false
+            $info.RedirectStandardInput = $true   # kept open and never written, like setup.exe's
+            $info.RedirectStandardOutput = $true
+            $info.RedirectStandardError = $true
+            $p = [System.Diagnostics.Process]::Start($info)
+            $reads = @($p.StandardOutput.ReadToEndAsync(), $p.StandardError.ReadToEndAsync())
+            if (-not $p.WaitForExit(300000)) { $p.Kill(); "FAILED: the check was still waiting after 5 minutes"; exit 1 }
+            [void][System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]$reads, 10000)
+            $out = $reads[0].Result + $reads[1].Result
             $out
-            if ($code -ne 0 -or $out -notmatch "64-bit process: True" -or $out -notmatch "Program output check OK" -or $out -notmatch "Background start check OK") { "FAILED (exit code $code)"; exit 1 }
+            $expected = @("64-bit process: True", "Program output check OK", "Background start check OK", "Input check OK", "Time limit check OK", "Argument quoting check OK")
+            $missing = @($expected | Where-Object { $out -notmatch [regex]::Escape($_) })
+            if ($p.ExitCode -ne 0 -or $missing) { "FAILED (exit code $($p.ExitCode); missing: $($missing -join ', '))"; exit 1 }
           }
 
   windows-setup:
@@ -89,7 +101,15 @@ jobs:
             $started = Get-Date
             $p = Start-Process -FilePath $Path -ArgumentList $Arguments -PassThru
             $null = $p.Handle  # keeps the exit code readable
-            if (-not $p.WaitForExit(40 * 60 * 1000)) { Stop-Process -Id $p.Id -Force; throw "setup.exe did not finish within 40 minutes" }
+            if (-not $p.WaitForExit(25 * 60 * 1000)) {
+              Write-Host "setup.exe did not finish within 25 minutes. Still running:"
+              Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(setup|ClipForge-Setup.*|powershell|wsl|wslservice|msiexec|ping|findstr)\.exe$' } |
+                ForEach-Object { Write-Host "  $($_.ProcessId) $($_.Name): $($_.CommandLine)" }
+              $log = Join-Path $dir "install.log"
+              if (Test-Path $log) { Write-Host "----- install.log so far -----"; Get-Content $log | ForEach-Object { Write-Host $_ } }
+              Stop-Process -Id $p.Id -Force
+              exit 1
+            }
             Write-Host "setup.exe $($Arguments -join ' ') -> exit code $($p.ExitCode) after $([int]((Get-Date) - $started).TotalSeconds) s"
             return [int]$p.ExitCode
           }
