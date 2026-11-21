@@ -227,7 +227,9 @@ Section "CLIPFORGE" SecMain
 SectionEnd
 
 Function OpenClipForge
-  Exec '"${SYSNATIVE}\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" open'
+  ; CLIPFORGE is already running (setup's last step waited for it). Explorer opens the address in
+  ; the default browser as you - not with setup's administrator rights.
+  Exec '"$WINDIR\explorer.exe" "http://localhost:3000"'
 FunctionEnd
 
 Section "Uninstall"

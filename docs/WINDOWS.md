@@ -32,12 +32,16 @@ and CLIPFORGE opens in your browser.
    | 7 | starts CLIPFORGE and checks that it answers | about 1 min |
 
    If Windows has to **restart** to finish turning on WSL 2 (common on PCs that never used it),
-   setup asks you; after you sign in again it **continues by itself** where it stopped.
+   setup asks you; after you sign in again it **continues by itself** where it stopped. (It does
+   that through a one-time Task Scheduler entry, *CLIPFORGE setup*, which runs setup with
+   administrator rights at your next sign-in and is removed as soon as setup continues. If setup
+   doesn't reappear within a minute of signing in, run it again yourself.)
 4. On the last page, keep *Open CLIPFORGE now* ticked. Create your owner account in the browser
    (http://localhost:3000), then follow the *Get set up* list on the Dashboard.
 
-The full log is in `%LOCALAPPDATA%\ClipForge\install.log`. If anything fails, run setup again: it
-continues where it stopped and keeps everything already done.
+The full log is `install.log` in the installation folder (`%LOCALAPPDATA%\ClipForge` unless you
+chose another). If anything fails, run setup again: it continues where it stopped, keeps
+everything already done, and offers the same folder.
 
 ## Everyday use
 
@@ -95,6 +99,7 @@ wsl -d ClipForge -- docker compose --project-directory /opt/clipforge logs --tai
 | Problem | Fix |
 |---|---|
 | "Hardware virtualization looks switched off" / WSL can't start | Turn on *Intel VT-x* / *AMD-V (SVM)* in the BIOS/UEFI, then run setup again |
+| Setup 0.2.0 stopped with "The term 'wsl.exe' is not recognized" right after turning on the Windows features | A bug in that version (it looked for WSL as a 32-bit program). Run **ClipForge-Setup-0.2.1.exe** or later: the features already turned on are kept; restart when it asks and it continues after you sign in |
 | Setup keeps asking to restart | Install *Windows Subsystem for Linux* from the Microsoft Store (or run Windows Update), restart, run setup again |
 | Port 3000 already in use | Another program uses it; quit that program, or change `CLIPFORGE_HTTP_PORT` in `/opt/clipforge/.env` inside the ClipForge environment and use that port |
 | CLIPFORGE didn't start in time | Use the CLIPFORGE shortcut again; the log is in `%LOCALAPPDATA%\ClipForge\clipforge.log` |

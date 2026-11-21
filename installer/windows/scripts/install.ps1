@@ -227,6 +227,19 @@ function Step-Check {
   $code = Invoke-Native "cmd.exe" @("/c", "echo output-check-stdout & echo output-check-stderr 1>&2 & exit /b 3")
   if ($code -ne 3) { Stop-Install "Program output check failed (exit code $code instead of 3)." }
   Say "   Program output check OK"
+  # The launcher starts CLIPFORGE's Linux environment as a background program while setup reads
+  # its output; that must not keep setup waiting until the background program ends.
+  $pidFile = Join-Path $InstallDir "check-background.pid"
+  $command = "`$p = Start-Process -FilePath ping.exe -ArgumentList '-n 120 127.0.0.1' -WindowStyle Hidden -PassThru; Set-Content -Path '$($pidFile -replace "'", "''")' -Value `$p.Id"
+  $started = Get-Date
+  [void](Invoke-Native (Join-Path $PSHOME "powershell.exe") @("-NoProfile", "-Command", $command))
+  $seconds = [int]((Get-Date) - $started).TotalSeconds
+  if (Test-Path $pidFile) {
+    Stop-Process -Id ([int](Get-Content $pidFile)) -Force -ErrorAction SilentlyContinue
+    Remove-Item $pidFile -Force
+  }
+  if ($seconds -gt 60) { Stop-Install "A program started in the background kept setup waiting for $seconds seconds." }
+  Say "   Background start check OK ($seconds s)"
 }
 
 function Step-Preflight {

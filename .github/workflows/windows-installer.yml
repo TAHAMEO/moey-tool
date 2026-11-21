@@ -56,7 +56,7 @@ jobs:
             $out = & $ps -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step check -InstallDir "$env:RUNNER_TEMP\check" | Out-String
             $code = $LASTEXITCODE
             $out
-            if ($code -ne 0 -or $out -notmatch "64-bit process: True" -or $out -notmatch "Program output check OK") { "FAILED (exit code $code)"; exit 1 }
+            if ($code -ne 0 -or $out -notmatch "64-bit process: True" -or $out -notmatch "Program output check OK" -or $out -notmatch "Background start check OK") { "FAILED (exit code $code)"; exit 1 }
           }
 
   windows-setup:
@@ -78,7 +78,11 @@ jobs:
           $drive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free } | Sort-Object Free -Descending | Select-Object -First 1
           $dir = Join-Path $drive.Root "cf-setup-test"
           "Installing into $dir"
-          "WSL features before: " + ((Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform | ForEach-Object { "$($_.FeatureName)=$($_.State)" }) -join ", ")
+          function Get-WslFeatures {
+            (@("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform") | ForEach-Object {
+              "$_=$((Get-WindowsOptionalFeature -Online -FeatureName $_).State)" }) -join ", "
+          }
+          "WSL features before: $(Get-WslFeatures)"
           $exe = (Get-ChildItem setup\ClipForge-Setup-*.exe | Select-Object -First 1).FullName
 
           function Invoke-Setup([string]$Path, [string[]]$Arguments) {
@@ -124,4 +128,4 @@ jobs:
             $runs = ([regex]::Matches((Get-Content -Raw (Join-Path $dir "install.log")), "Checking this PC")).Count
             if ($runs -ne 2) { "FAILED: expected two runs in install.log, found $runs"; exit 1 }
           }
-          "WSL features after: " + ((Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform | ForEach-Object { "$($_.FeatureName)=$($_.State)" }) -join ", ")
+          "WSL features after: $(Get-WslFeatures)"
