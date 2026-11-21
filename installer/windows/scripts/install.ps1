@@ -294,6 +294,8 @@ function Step-Check {
   $quoted = ConvertTo-ArgumentLine @("plain", "with space", 'C:\dir with space\', 'say "hi"', "")
   if ($quoted -ne 'plain "with space" "C:\dir with space\\" "say \"hi\"" ""') { Stop-Install "Argument quoting check failed: $quoted" }
   Say "   Argument quoting check OK"
+  $problem = Get-VirtualizationProblem
+  Say ("   Virtual machines: {0}" -f $(if ($problem) { "not yet ($problem)" } else { "Windows can run them" }))
 }
 
 function Step-Preflight {
@@ -354,6 +356,31 @@ function Install-WslMsi {
   }
 }
 
+function Get-VirtualizationProblem {
+  # WSL 2 runs Linux in a small virtual machine. Returns $null when Windows can run one, otherwise
+  # "restart" (Windows hasn't restarted since Virtual Machine Platform was turned on), "launchtype"
+  # (Windows' hypervisor is switched off in the boot settings) or "firmware" (virtualization is
+  # switched off in the BIOS/UEFI).
+  if ((Get-CimInstance Win32_ComputerSystem).HypervisorPresent) { return $null }
+  if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { return "restart" }
+  $boot = Invoke-Limited (Join-Path $env:WINDIR "System32\bcdedit.exe") @("/enum", "{current}") 60 -Quiet
+  if (($boot.Lines -join "`n") -match "hypervisorlaunchtype\s+Off") { return "launchtype" }
+  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+  if (-not $cpu.VirtualizationFirmwareEnabled) { return "firmware" }
+  return "restart"
+}
+
+function Stop-Virtualization([string]$Problem) {
+  if ($Problem -eq "firmware") {
+    Stop-Install ("Virtualization is switched off in this PC's BIOS/UEFI, and WSL 2 needs it. Restart the PC, open the " +
+                  "BIOS/UEFI settings (usually F2, F10, F12 or Del while it starts), turn on 'Intel Virtualization " +
+                  "Technology (VT-x)' or 'SVM Mode' (AMD), save, then run CLIPFORGE setup again.")
+  }
+  Stop-Install ("Windows still can't run virtual machines after a restart, and WSL 2 needs them. Check Task Manager > " +
+                "Performance > CPU > 'Virtualization': if it says Disabled, turn it on in the BIOS/UEFI ('Intel VT-x' or " +
+                "'SVM Mode'), then run CLIPFORGE setup again.")
+}
+
 function Step-Wsl {
   Say "Checking WSL 2 (Windows Subsystem for Linux)"
   $marker = Join-Path $InstallDir "wsl-restart-requested"
@@ -400,6 +427,17 @@ function Step-Wsl {
     }
     Request-Restart "WSL is not ready yet; a restart usually finishes its installation."
   }
+  $problem = Get-VirtualizationProblem
+  if ($problem -eq "launchtype") {
+    Say "   Windows' hypervisor is switched off in the boot settings; switching it on"
+    [void](Invoke-Limited (Join-Path $env:WINDIR "System32\bcdedit.exe") @("/set", "hypervisorlaunchtype", "auto") 60)
+    Request-Restart "Windows needs to restart to start its hypervisor (WSL 2 needs it). Setup continues automatically after you sign in again."
+  }
+  if ($problem -eq "firmware") { Stop-Virtualization $problem }
+  if ($problem -eq "restart") {
+    if (Test-Path $marker) { Remove-Item $marker -Force; Stop-Virtualization "restart" }
+    Request-Restart "Windows needs to restart before it can run WSL 2 (Virtual Machine Platform is on but not running yet). Setup continues automatically after you sign in again."
+  }
   Remove-Item $marker -Force -ErrorAction SilentlyContinue
   [void](Invoke-Wsl @("--set-default-version", "2") 300)
   Say "   WSL 2 is ready"
@@ -410,21 +448,37 @@ function Step-Distro {
     Say "Using the existing ClipForge Linux environment (your data is kept)"
     return
   }
-  Say "Downloading Ubuntu 24.04 for WSL (about 340 MB)"
   $tarball = Join-Path $InstallDir "ubuntu-rootfs.tar.gz"
-  Get-File $RootfsUrl $tarball "Ubuntu"
-  $hash = (Get-FileHash -Algorithm SHA256 -Path $tarball).Hash.ToLower()
-  if ($hash -ne $RootfsSha256) {
-    Remove-Item $tarball -Force
-    Stop-Install "The Ubuntu download is damaged (checksum mismatch). Run setup again."
+  $kept = (Test-Path $tarball) -and ((Get-FileHash -Algorithm SHA256 -Path $tarball).Hash.ToLower() -eq $RootfsSha256)
+  if ($kept) {
+    Say "Using Ubuntu 24.04 for WSL downloaded earlier (checksum verified)"
+  } else {
+    Say "Downloading Ubuntu 24.04 for WSL (about 340 MB)"
+    Get-File $RootfsUrl $tarball "Ubuntu"
+    $hash = (Get-FileHash -Algorithm SHA256 -Path $tarball).Hash.ToLower()
+    if ($hash -ne $RootfsSha256) {
+      Remove-Item $tarball -Force
+      Stop-Install "The Ubuntu download is damaged (checksum mismatch). Run setup again."
+    }
+    Say "   Checksum verified"
   }
-  Say "   Checksum verified"
   Say "Creating the ClipForge Linux environment"
   $target = Join-Path $InstallDir "wsl"
   New-Item -ItemType Directory -Force -Path $target | Out-Null
-  $code = (Invoke-Limited (Get-Wsl) @("--import", $Distro, $target, $tarball, "--version", "2") 1800).Code
+  $import = Invoke-Limited (Get-Wsl) @("--import", $Distro, $target, $tarball, "--version", "2") 1800
+  if ($import.Code -ne 0) {
+    # The download stays (verified) so the next attempt doesn't fetch it again.
+    if (($import.Lines -join " ") -match "HCS_E_|virtualization|Virtual Machine Platform|0x80370102") {
+      $problem = Get-VirtualizationProblem
+      if (-not $problem) { $problem = "restart" }
+      if ($problem -eq "firmware") { Stop-Virtualization $problem }
+      Stop-Install ("Windows can't start WSL 2's virtual machine yet. Restart Windows and run CLIPFORGE setup again " +
+                    "(it continues from here). If it still fails after a restart, check Task Manager > Performance > CPU > " +
+                    "'Virtualization': if it says Disabled, turn it on in the BIOS/UEFI.")
+    }
+    Stop-Install "WSL could not create the Linux environment (wsl --import exit code $($import.Code))."
+  }
   Remove-Item $tarball -Force -ErrorAction SilentlyContinue
-  if ($code -ne 0) { Stop-Install "WSL could not create the Linux environment (wsl --import exit code $code). If virtualization is off in the BIOS/UEFI, turn it on." }
   Configure-WslMemory
 }
 
