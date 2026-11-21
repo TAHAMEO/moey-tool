@@ -89,6 +89,15 @@ export default function ProjectPage() {
         </Card>
       )}
 
+      {access?.method === "public_download" && access.capabilities.media && (
+        <Card className="mb-6 p-4 text-[13px]">
+          <p className="text-muted">
+            <span className="font-medium text-text">Downloaded from the public {platformName(access.platform)} video with yt-dlp.</span>{" "}
+            {access.owned ? "It's from your connected account." : "Use these clips only if you own the video or have the creator's permission — clips from someone else's video are never published automatically."}
+          </p>
+        </Card>
+      )}
+
       {project.errors.length > 0 && (
         <Card className="mb-6 border-danger/40 p-4 text-[13px]">
           {project.errors.map((e, i) => <p key={i} className="text-danger">{e.message}</p>)}

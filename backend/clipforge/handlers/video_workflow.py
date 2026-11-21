@@ -117,20 +117,58 @@ def route_access(state: VideoState) -> str:
 
 
 def acquire_node(state: VideoState, config) -> VideoState:
-    _progress(config, 0.08, "Fetching available source data", "acquire")
-    _set_project(state["project_id"], label="Fetching available source data")
-    outcome = await_children(config, "acquire", [ChildSpec("acquire", "source.acquire",
-                                                           {"source_id": state["source_id"], "access": state["access"]},
-                                                           queue="default", label="Fetching source")],
-                             label="Fetching available source data")["acquire"]
+    access = state["access"]
+    download = access.get("method") == "public_download"
+    label = "Downloading video" if download else "Fetching available source data"
+    _progress(config, 0.08, label, "acquire")
+    _set_project(state["project_id"], label=label)
+    if download:
+        # yt-dlp parses untrusted pages: it runs in the media worker, which holds no secrets.
+        spec = ChildSpec("acquire", "source.download", {"source_id": state["source_id"], "url": access["acquire"]["url"]},
+                         queue="media", label="Downloading video")
+    else:
+        spec = ChildSpec("acquire", "source.acquire", {"source_id": state["source_id"], "access": access},
+                         queue="default", label="Fetching source")
+    outcome = await_children(config, "acquire", [spec], label=label)["acquire"]
     if not outcome.ok:
-        error = (outcome.error or {}).get("message", "Could not fetch the source")
-        _fail(state, error, code="acquire", label="Source unavailable")
+        error = outcome.error or {}
+        message = error.get("message", "Could not fetch the source")
+        reported = error.get("state")
+        if download and reported and reported not in (rs.FULL_MEDIA_ACCESS, rs.REPLAY_ACCESSIBLE):
+            # The download showed what access really is (sign-in needed, private, removed…): report that state.
+            return {"access": _access_after_download(state, access, reported, message),
+                    "notes": [f"Download not possible: {reported}"]}
+        _fail(state, message, code="acquire", label="Source unavailable")
     return {"acquired": outcome.result or {}}
 
 
+def _access_after_download(state: VideoState, access: dict, reported: str, message: str) -> dict:
+    updated = {**access, "state": reported, "method": None, "acquire": {},
+               "capabilities": {**access.get("capabilities", {}), "media": False},
+               "reasons": [message], "alternatives": []}
+    alternatives = [rs.ALT["upload"]]
+    if access.get("platform") == "youtube":
+        alternatives.insert(0, rs.ALT["connect_drive"])
+    if access.get("platform") == "instagram":
+        alternatives.insert(0, rs.ALT["connect_instagram"])
+    if reported in (rs.PERMISSION_REQUIRED, rs.SOURCE_PRIVATE, rs.LOGIN_REQUIRED):
+        alternatives.append(rs.ALT["permission"])
+    updated["alternatives"] = alternatives
+    updated["checks"] = [*access.get("checks", []), {"check": "public_download", "result": f"{reported}: {message}"}]
+    with session_scope() as db:
+        source = db.get(Source, uuid.UUID(state["source_id"]))
+        source.access_status = reported
+        source.access_detail = updated
+    return updated
+
+
 def route_after_acquire(state: VideoState) -> str:
-    return "transcript_moments" if state["access"]["state"] == rs.TRANSCRIPT_ONLY else "prepare"
+    access_state = state["access"]["state"]
+    if access_state == rs.TRANSCRIPT_ONLY:
+        return "transcript_moments"
+    if access_state not in (rs.FULL_MEDIA_ACCESS, rs.REPLAY_ACCESSIBLE, rs.AUTHORIZED_LIVE_FEED):
+        return "report_access"
+    return "prepare"
 
 
 def prepare_node(state: VideoState, config) -> VideoState:
@@ -299,6 +337,36 @@ def package_node(state: VideoState, config) -> VideoState:
     return {"packages": packages}
 
 
+def _requested_schedule(state: VideoState, packages: list[dict], approved: list[str], config) -> tuple[list[str], list[str]]:
+    """Times the owner asked for in chat ("…and post them tomorrow at 6pm") for packages approved without one."""
+    from datetime import datetime
+
+    from ..jobs import queue as jobs_queue
+    from ..publishing import schedule
+
+    with session_scope() as db:
+        project = db.get(Project, uuid.UUID(state["project_id"]))
+        wanted = (project.request or {}).get("schedule") or {}
+        if not wanted.get("at") or not approved:
+            return approved, []
+        chosen = [p for p in packages if p["package_id"] in approved]
+        pending = [p for p in chosen if db.get(OutputPackage, uuid.UUID(p["package_id"])).status != "scheduled"]
+        ranks = sorted({int(p.get("rank") or 0) for p in pending})
+        slots = schedule.plan(datetime.fromisoformat(wanted["at"]), len(ranks), wanted.get("every_minutes"))
+        kept, notes = list(approved), []
+        for entry in sorted(pending, key=lambda p: (int(p.get("rank") or 0), p["platform"])):
+            package = db.get(OutputPackage, uuid.UUID(entry["package_id"]))
+            try:
+                with db.begin_nested():
+                    schedule.apply(db, package, slots[ranks.index(int(entry.get("rank") or 0))])
+            except schedule.ScheduleError as exc:
+                # The owner asked for a time; never publish it at another one silently.
+                kept.remove(entry["package_id"])
+                notes.append(f"Clip {entry.get('rank')} ({entry['platform']}) was not scheduled: {exc}")
+                jobs_queue.add_event(db, job_context(config).job_id, notes[-1], level="warning", stage="publish")
+        return kept, notes
+
+
 def publish_gate_node(state: VideoState, config) -> VideoState:
     with session_scope() as db:
         project = db.get(Project, uuid.UUID(state["project_id"]))
@@ -307,15 +375,33 @@ def publish_gate_node(state: VideoState, config) -> VideoState:
     packages = [p for p in state.get("packages", []) if p["platform"] in publishing.platforms]
     if not packages or publishing.policy == "draft_only" or not (requested or publishing.policy == "auto_publish"):
         return {"approved": []}
-    blocked = [p for p in packages if not p["qc_passed"] or p["review_words"]]
+    access = state.get("access") or {}
+    third_party = access.get("method") == "public_download" and not access.get("owned")
+    blocked = [p for p in packages if not p["qc_passed"] or p["review_words"] or third_party]
     if publishing.policy == "auto_publish" and not blocked:
-        return {"approved": [p["package_id"] for p in packages], "notes": ["Auto-publish policy: approved automatically"]}
+        approved, notes = _requested_schedule(state, packages, [p["package_id"] for p in packages], config)
+        return {"approved": approved, "notes": ["Auto-publish policy: approved automatically", *notes]}
     _set_project(state["project_id"], status="awaiting_approval", label="Waiting for your approval")
     decision = await_approval({"packages": packages, "project_id": state["project_id"],
+                               "schedule": _schedule_hint(state["project_id"]),
+                               # Clips cut from someone else's downloaded video are never published automatically.
+                               "rights": "third_party_download" if third_party else None,
                                "flags": [{"package_id": p["package_id"], "reason": "caption words need review"
-                                          if p["review_words"] else "quality check warning"} for p in blocked]})
+                                          if p["review_words"] else "quality check warning" if not p["qc_passed"]
+                                          else "made from another creator's video — confirm you may republish it"}
+                                         for p in blocked]})
     approved = [pid for pid in (decision or {}).get("approved", []) if any(p["package_id"] == pid for p in packages)]
-    return {"approved": approved}
+    notes: list[str] = []
+    if not (decision or {}).get("publish_now"):
+        approved, notes = _requested_schedule(state, packages, approved, config)
+    return {"approved": approved, "notes": notes}
+
+
+def _schedule_hint(project_id: str) -> dict | None:
+    """The time asked for in chat, shown on the approval card so it can be confirmed or changed."""
+    with session_scope() as db:
+        project = db.get(Project, uuid.UUID(project_id))
+        return (project.request or {}).get("schedule") or None
 
 
 def publish_node(state: VideoState, config) -> VideoState:
@@ -429,7 +515,8 @@ def graph():
         g.add_edge(START, "resolve")
         g.add_conditional_edges("resolve", route_access, {"acquire": "acquire", "live": "live", "await_live": "await_live",
                                                           "report_access": "report_access"})
-        g.add_conditional_edges("acquire", route_after_acquire, {"prepare": "prepare", "transcript_moments": "transcript_moments"})
+        g.add_conditional_edges("acquire", route_after_acquire, {"prepare": "prepare", "transcript_moments": "transcript_moments",
+                                                                 "report_access": "report_access"})
         g.add_edge("await_live", "resolve")
         g.add_edge("live", "prepare")
         g.add_edge("prepare", "understand")

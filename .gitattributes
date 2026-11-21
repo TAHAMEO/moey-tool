@@ -1,0 +1,9 @@
+# Keep LF line endings on every platform. Git for Windows would otherwise check text files out
+# with CRLF, which breaks the shell scripts and the config files mounted into Linux containers.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ttf binary
+*.mp4 binary
+*.gguf binary

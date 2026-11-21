@@ -13,8 +13,14 @@ export type JobSummary = {
   project_id: string | null;
   created_at: string;
   finished_at: string | null;
-  waiting?: { type?: string; label?: string; packages?: ApprovalPackage[] } | null;
+  waiting?: {
+    type?: string; label?: string; packages?: ApprovalPackage[]; schedule?: RequestedSchedule | null;
+    rights?: "third_party_download" | null; flags?: { package_id: string; reason: string }[];
+  } | null;
 };
+
+/** A publish time asked for in chat ("…and post them tomorrow at 6pm"). */
+export type RequestedSchedule = { at: string; every_minutes: number | null; assumed_time?: boolean; timezone?: string; phrase?: string };
 
 export type JobDetail = JobSummary & {
   result: Record<string, unknown> | null;
@@ -81,6 +87,7 @@ export type Publication = {
   url: string | null;
   external_id: string | null;
   published_at: string | null;
+  scheduled_at: string | null;
   last_error: string | null;
   metrics: Record<string, number> | null;
   unavailable_metrics: Record<string, string> | null;
@@ -98,7 +105,17 @@ export type Package = {
   privacy: string;
   metadata_method: string;
   thumbnail_url: string | null;
+  scheduled_at: string | null;
+  /** youtube: YouTube's own scheduler · held: CLIPFORGE publishes at the time · now: not scheduled */
+  schedule_mode: "youtube" | "held" | "now";
   publications: Publication[];
+};
+
+export type ScheduleItem = {
+  package_id: string; platform: "youtube" | "instagram"; status: "scheduled" | "missed"; title: string; clip_rank: number;
+  project_id: string; project_title: string; scheduled_at: string | null; owner_time: boolean;
+  mode: "youtube" | "held" | "now"; privacy: string; uploaded: boolean; remote_status: string | null; on_hold: boolean;
+  last_error: string | null; thumbnail_url: string | null;
 };
 
 export type Clip = {
@@ -199,7 +216,9 @@ export type PublishingSettings = {
   policy: "approval_required" | "auto_publish" | "draft_only"; platforms: ("youtube" | "instagram")[]; default_privacy: "private" | "unlisted" | "public";
   max_per_day_youtube: number; max_per_day_instagram: number; upload_youtube_captions: boolean; instagram_share_to_feed: boolean;
   youtube_category_id: string; youtube_playlist_id: string | null; made_for_kids: boolean;
+  timezone: string; late_grace_minutes: number;
 };
+export type SourceSettings = { public_downloads: boolean };
 export type ClipSettings = {
   default_count: number; min_seconds: number; max_seconds: number; aspects: ("9:16" | "1:1" | "16:9")[];
   caption_style: "bold_pop" | "karaoke_fill" | "clean_lower" | "boxed"; burn_captions: boolean; languages: string[]; remove_silences: boolean;
@@ -208,7 +227,7 @@ export type ClipSettings = {
 export type BrandSettings = { accent_color: string; watermark_library_item_id: string | null; watermark_position: string; channel_name: string };
 export type RetentionSettings = { source_media_days: number; work_files_days: number; live_buffer_minutes: number; keep_renders_days: number };
 export type AllSettings = {
-  ai: AISettings; publishing: PublishingSettings; control: { paused: boolean; emergency_stop: boolean; disabled_integrations: string[] };
+  ai: AISettings; publishing: PublishingSettings; sources: SourceSettings; control: { paused: boolean; emergency_stop: boolean; disabled_integrations: string[] };
   clips: ClipSettings; brand: BrandSettings; analytics: { collection_offsets_hours: number[] }; retention: RetentionSettings; ui: { show_diagnostics: boolean };
 };
 

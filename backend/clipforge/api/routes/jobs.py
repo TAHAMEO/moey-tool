@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...db.base import get_db
-from ...db.models import Job, JobEvent
+from ...db.models import Job, JobEvent, OutputPackage
 from ...jobs import queue
+from ...publishing import schedule
 from ...security.audit import audit
 from ..deps import Principal, client_ip, editor, viewer
 
@@ -21,6 +23,12 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 class Approval(BaseModel):
     approved: list[uuid.UUID] = Field(default_factory=list)
     rejected: list[uuid.UUID] = Field(default_factory=list)
+    #: Publish at this time instead of now (ISO 8601 with a time zone).
+    scheduled_at: datetime | None = None
+    #: Several clips: one every N minutes from ``scheduled_at`` (same clip on both platforms: same time).
+    every_minutes: int | None = Field(None, ge=1, le=43200)
+    #: Publish immediately even though a time was asked for in chat.
+    publish_now: bool = False
 
 
 def _get(db: Session, job_id: uuid.UUID) -> Job:
@@ -65,11 +73,21 @@ def approve(job_id: uuid.UUID, body: Approval, request: Request, db: Session = D
         raise HTTPException(409, {"code": "state", "message": "This job is not waiting for approval."})
     allowed = {p["package_id"] for p in waiting.get("packages", [])}
     approved = [str(p) for p in body.approved if str(p) in allowed]
-    queue.resume_with(db, job_id, {"approved": approved, "rejected": [str(p) for p in body.rejected], "by": str(principal.id)},
-                      label="Publishing approved clips" if approved else "Finishing without publishing")
+    times: dict[str, str] = {}
+    if body.scheduled_at is not None and approved:
+        entries = [(db.get(OutputPackage, uuid.UUID(p["package_id"])), int(p.get("rank") or 0))
+                   for p in waiting.get("packages", []) if p["package_id"] in approved]
+        try:
+            times = {k: v.isoformat() for k, v in schedule.apply_plan(
+                db, [(pkg, rank) for pkg, rank in entries if pkg is not None], body.scheduled_at, body.every_minutes).items()}
+        except schedule.ScheduleError as exc:
+            raise HTTPException(409 if exc.code == "daily_limit" else 400, {"code": exc.code, "message": str(exc)}) from exc
+    label = ("Scheduling approved clips" if times else "Publishing approved clips") if approved else "Finishing without publishing"
+    queue.resume_with(db, job_id, {"approved": approved, "rejected": [str(p) for p in body.rejected], "by": str(principal.id),
+                                   "scheduled": times, "publish_now": body.publish_now and not times}, label=label)
     audit(db, "publish.approve", user_id=principal.id, target_type="job", target_id=job_id,
-          details={"approved": approved}, ip=client_ip(request))
-    return {"ok": True, "approved": approved}
+          details={"approved": approved, "scheduled": times}, ip=client_ip(request))
+    return {"ok": True, "approved": approved, "scheduled": times}
 
 
 @router.post("/{job_id}/{action}")

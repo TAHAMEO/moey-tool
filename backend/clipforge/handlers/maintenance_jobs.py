@@ -102,11 +102,12 @@ def refresh_tokens(ctx: JobContext) -> dict:
     return {"checked": refreshed, "failed": failed}
 
 
-@handler("maintenance.publish_scheduled", queue="default")
+@handler("maintenance.publish_scheduled", queue="default", needs_secrets=True)
 def publish_scheduled(ctx: JobContext) -> dict:
-    # Scheduled publishing is implemented with run_after on workflow.publish jobs;
-    # this periodic job only exists so older installations keep a valid schedule.
-    return {"ok": True}
+    """Every 5 minutes (and right after any schedule change): make scheduled posts match their plan."""
+    from ..publishing import schedule
+
+    return schedule.reconcile()
 
 
 def run_backup(label: str = "scheduled") -> dict:

@@ -1,15 +1,16 @@
 "use client";
 
-import { Activity, CheckCircle2, Circle, Clapperboard, DollarSign, Gauge, OctagonPause, Pause, Play, Send, ShieldAlert, X } from "lucide-react";
+import { Activity, CalendarClock, CheckCircle2, Circle, Clapperboard, DollarSign, Gauge, OctagonPause, Pause, Play, Send, ShieldAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { StatusBadge } from "@/components/status";
+import { formatWhen } from "@/components/schedule";
+import { Badge, StatusBadge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Modal, PageHeader, ProgressBar, SectionHeader, Skeleton, Stat } from "@/components/ui";
 import { api, money, platformName, timeAgo } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
-import type { JobSummary, ProjectSummary } from "@/lib/types";
+import type { JobSummary, ProjectSummary, ScheduleItem } from "@/lib/types";
 
 type Usage = { today_usd: number; month_usd: number; budgets: { daily: number; monthly: number }; cache_hits_month: number };
 type Connections = { accounts: { platform: string; status: string }[]; youtube_quota_remaining: number };
@@ -66,6 +67,38 @@ function SetupChecklist({ connections, projects, diagnostics }: {
   );
 }
 
+/** Scheduled (and missed) posts, soonest first, with how each one will go out. */
+function UpcomingPosts() {
+  const { data } = useResource<{ timezone: string; items: ScheduleItem[] }>("/schedule", { poll: 30000 });
+  if (!data || data.items.length === 0) return null;
+  return (
+    <Card className="p-5">
+      <SectionHeader title="Upcoming posts" description={`Times shown in your time zone. Schedules use ${data.timezone} for “tomorrow at 6pm” and daily limits.`} />
+      <ul className="divide-y divide-border">
+        {data.items.slice(0, 12).map((item) => (
+          <li key={item.package_id} className="flex items-center gap-3 py-2.5">
+            <CalendarClock className={`size-4 shrink-0 ${item.status === "missed" ? "text-warning" : "text-primary"}`} />
+            <div className="min-w-0 flex-1">
+              <Link href={`/videos/${item.project_id}`} className="block truncate text-[13px] font-medium hover:text-primary">{item.title}</Link>
+              <p className="truncate text-[12px] text-muted">
+                {platformName(item.platform)} · {item.status === "missed" ? `missed (${formatWhen(item.scheduled_at)})` : formatWhen(item.scheduled_at)}
+                {!item.owner_time && item.status !== "missed" ? " · next free slot" : ""}
+              </p>
+            </div>
+            {item.status === "missed" ? <Badge tone="warning">Pick a new time</Badge>
+              : item.on_hold ? <Badge tone="warning">On hold</Badge>
+              : item.mode === "youtube" ? <Badge tone="success">{item.uploaded ? "With YouTube" : "YouTube schedules it"}</Badge>
+              : <Badge tone="info">CLIPFORGE posts it</Badge>}
+          </li>
+        ))}
+      </ul>
+      {data.items.some((i) => i.mode === "held" && i.status === "scheduled") && (
+        <p className="mt-3 text-[12px] text-faint">“CLIPFORGE posts it” needs CLIPFORGE running at that time (on Windows: the PC on and Docker Desktop started).</p>
+      )}
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
   const { can } = useAuth();
   const toast = useToast();
@@ -81,8 +114,9 @@ export default function DashboardPage() {
   async function control(action: string) {
     setBusy(action);
     try {
-      const result = await api<{ cancelled_jobs?: number }>(`/control/${action}`, { method: "POST" });
-      toast("success", action === "emergency_stop" ? `Emergency stop on. ${result.cancelled_jobs ?? 0} job(s) cancelled.` : "Updated.");
+      const result = await api<{ cancelled_jobs?: number; unscheduled_posts?: number }>(`/control/${action}`, { method: "POST" });
+      toast("success", action === "emergency_stop"
+        ? `Emergency stop on. ${result.cancelled_jobs ?? 0} job(s) and ${result.unscheduled_posts ?? 0} scheduled post(s) cancelled.` : "Updated.");
       reloadSettings();
     } catch (err) {
       toast("error", err instanceof Error ? err.message : "Action failed");
@@ -135,6 +169,8 @@ export default function DashboardPage() {
               ))}
             </ul>
           </Card>
+
+          <UpcomingPosts />
 
           <Card className="p-5">
             <SectionHeader title="Recent projects" action={<Link href="/videos" className="text-[13px] font-medium text-primary">All videos →</Link>} />
@@ -213,7 +249,7 @@ export default function DashboardPage() {
       <Modal open={confirmStop} onClose={() => setConfirmStop(false)} title="Emergency stop?"
         footer={<><Button variant="ghost" onClick={() => setConfirmStop(false)}>Cancel</Button>
           <Button variant="danger" loading={busy === "emergency_stop"} onClick={() => control("emergency_stop")}>Stop everything</Button></>}>
-        <p className="text-sm text-muted">This cancels every running and queued job, blocks publishing and stops all calls to external AI providers until you clear it.</p>
+        <p className="text-sm text-muted">This cancels every running and queued job and every scheduled post, blocks publishing and stops all calls to external AI providers until you clear it. Videos already waiting on YouTube are switched to private.</p>
       </Modal>
     </div>
   );

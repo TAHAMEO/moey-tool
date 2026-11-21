@@ -10,6 +10,7 @@ import { LibrarySection } from "@/components/settings/LibrarySection";
 import { LiveSection } from "@/components/settings/LiveSection";
 import { PublishingSection } from "@/components/settings/PublishingSection";
 import { SecuritySection } from "@/components/settings/SecuritySection";
+import { SourcesSection } from "@/components/settings/SourcesSection";
 import { SettingsSection, useSettingsSaver } from "@/components/settings/shared";
 import { useToast } from "@/components/toast";
 import { PageHeader, Skeleton } from "@/components/ui";
@@ -20,6 +21,7 @@ import type { AllSettings } from "@/lib/types";
 const SECTIONS = [
   { id: "publishing", label: "Publishing" },
   { id: "connections", label: "Accounts" },
+  { id: "sources", label: "Sources" },
   { id: "clips", label: "Clips & editing" },
   { id: "brand", label: "Brand" },
   { id: "live", label: "Live streams" },
@@ -83,6 +85,7 @@ export default function SettingsPage() {
         <div className="min-w-0 space-y-10">
           <PublishingSection {...props} />
           <AccountsSection />
+          <SourcesSection {...props} />
           <ClipsSection {...props} />
           <BrandSection {...props} />
           <LiveSection />

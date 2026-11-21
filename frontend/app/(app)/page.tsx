@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { ArrowUp, Film, Link2, MessageSquarePlus, Paperclip, PlayCircle, Radio, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageView } from "@/components/chat/MessageView";
+import { browserZone } from "@/components/schedule";
 import { useToast } from "@/components/toast";
 import { Button, ProgressBar, Spinner } from "@/components/ui";
 import { api, platformName, timeAgo, uploadWithProgress } from "@/lib/api";
@@ -99,7 +100,8 @@ export default function BrainChatPage() {
     setUpload(null);
     try {
       const conversationId = await ensureConversation();
-      const reply = await api<Message>(`/chat/conversations/${conversationId}/messages`, { body: { text: content, attachments } });
+      const reply = await api<Message>(`/chat/conversations/${conversationId}/messages`,
+        { body: { text: content, attachments, timezone: browserZone() } });
       setMessages((m) => [...m, reply]);
       loadConversations().catch(() => undefined);
     } catch (err) {

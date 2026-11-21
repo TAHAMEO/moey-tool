@@ -7,9 +7,10 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,19 @@ class NewConversation(BaseModel):
 class NewMessage(BaseModel):
     text: str = Field("", max_length=8000)
     attachments: list[uuid.UUID] = Field(default_factory=list, max_length=5)
+    #: The browser's IANA time zone, so "tomorrow at 6pm" means the owner's 6pm.
+    timezone: str | None = Field(None, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            return None  # unknown zone: fall back to the time zone in Settings
+        return value
 
 
 def _own(db: Session, conversation_id: uuid.UUID, principal: Principal) -> Conversation:
@@ -87,7 +101,8 @@ def send_message(conversation_id: uuid.UUID, body: NewMessage, db: Session = Dep
             raise HTTPException(400, {"code": "attachment", "message": "Attachment not found."})
     db.commit()  # the Brain opens its own transactions
     try:
-        return handle_message(conversation_id, principal.user, body.text, [str(a) for a in body.attachments])
+        return handle_message(conversation_id, principal.user, body.text, [str(a) for a in body.attachments],
+                              timezone=body.timezone)
     except LookupError as exc:
         raise HTTPException(404, {"code": "not_found", "message": str(exc)}) from exc
 

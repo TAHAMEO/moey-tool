@@ -1,6 +1,7 @@
 "use client";
 
-import { Input, Label, Select, Toggle } from "@/components/ui";
+import { browserZone } from "@/components/schedule";
+import { Button, Input, Label, Select, Toggle } from "@/components/ui";
 import type { PublishingSettings } from "@/lib/types";
 import { Choice, Chips, NumberField, Row, SettingsSection, type SectionProps } from "./shared";
 
@@ -20,6 +21,27 @@ export function PublishingSection({ settings, save, editable }: SectionProps) {
         <Label>Platforms</Label>
         <Chips value={p.platforms} disabled={!editable} onChange={(platforms) => set({ platforms })}
           options={[{ value: "youtube", label: "YouTube Shorts" }, { value: "instagram", label: "Instagram Reels" }]} />
+      </Row>
+      <Row className="space-y-3">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label hint="for “tomorrow at 6pm” and daily limits">Time zone</Label>
+            <Input defaultValue={p.timezone} key={p.timezone} disabled={!editable} placeholder="Europe/London"
+              onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== p.timezone) set({ timezone: v }); }} />
+            {editable && browserZone() !== p.timezone && (
+              <Button size="sm" variant="ghost" className="mt-1.5" onClick={() => set({ timezone: browserZone() })}>
+                Use this device's time zone ({browserZone()})
+              </Button>
+            )}
+          </div>
+          <NumberField label="Late posts: still publish up to (minutes)" value={p.late_grace_minutes} min={5} max={10080} disabled={!editable}
+            onCommit={(v) => set({ late_grace_minutes: v })} />
+        </div>
+        <p className="text-[12px] text-muted">
+          Public YouTube videos scheduled at least 15 minutes ahead are handed to YouTube's own scheduler and go live even if this computer is off.
+          Instagram posts (and unlisted or private YouTube videos) are posted by CLIPFORGE at their time; if CLIPFORGE wasn't running then, a post that
+          would be later than the limit above waits for you instead of going out late.
+        </p>
       </Row>
       <Row className="grid gap-4 sm:grid-cols-2">
         <NumberField label="YouTube uploads per day" value={p.max_per_day_youtube} min={0} max={50} disabled={!editable} onCommit={(v) => set({ max_per_day_youtube: v })} />

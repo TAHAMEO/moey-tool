@@ -39,7 +39,14 @@ dependencies = [
     "numpy>=2.1,<2.6",
     "pillow==13.0.0",
     "pyspellchecker==0.9.1",
-    # --- Publishing ---
+    # --- Public video downloads (owner-enabled; see docs/SOURCE_ACCESS.md) ---
+    # yt-dlp without its [default] extra: that extra pulls in GPL-licensed mutagen and
+    # TLS-impersonation helpers, neither of which CLIPFORGE needs or wants.
+    "yt-dlp==2026.10.26",
+    "yt-dlp-ejs==0.8.0",   # YouTube player challenge solver scripts (run locally, no remote fetch)
+    "deno==2.9.8",         # sandboxed JavaScript runtime yt-dlp uses for those scripts
+    # --- Publishing and scheduling ---
+    "tzdata==2026.6",
     "aiohttp>=3.9",
     "instagram-python-sdk @ git+https://github.com/Inoue-AI/Inoue-AI-Instagram-SDK.git@5fcda416135c6d24277384b6208b98faf4f70cd8",
     # --- Storage ---

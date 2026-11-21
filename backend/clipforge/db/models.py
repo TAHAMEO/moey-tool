@@ -448,7 +448,10 @@ class OutputPackage(Base):
     subtitle_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("media_assets.id", ondelete="SET NULL"))
     metadata_method: Mapped[str] = mapped_column(String(60), default="local_template")
     privacy: Mapped[str] = mapped_column(String(20), default="private")
-    status: Mapped[str] = mapped_column(String(20), default="ready")  # draft|ready|approved|published|failed
+    # draft|ready|approved|scheduled|published|failed|missed
+    status: Mapped[str] = mapped_column(String(20), default="ready")
+    #: When the owner wants it to go live (None = as soon as it is approved).
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
 
@@ -484,6 +487,66 @@ class OAuthState(Base):
     code_verifier: Mapped[str | None] = mapped_column(String(200))
     redirect_uri: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = _created()
+
+
+# ---------------------------------------------------------------------------
+# Batches: many videos, one recipe (a folder picked in the browser or watched)
+# ---------------------------------------------------------------------------
+
+
+class WatchFolder(Base):
+    """A folder under the inbox root whose videos are processed automatically."""
+
+    __tablename__ = "watch_folders"
+
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(String(200))
+    path: Mapped[str] = mapped_column(String(1000), unique=True)  # relative to the inbox root ("" = the root)
+    recipe: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_subfolders: Mapped[bool] = mapped_column(Boolean, default=True)
+    after_processing: Mapped[str] = mapped_column(String(20), default="keep")  # keep|move
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("batches.id", ondelete="SET NULL", use_alter=True,
+                                                                  name="fk_watch_folder_batch"))
+    state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # files seen but not yet stable
+    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+
+class Batch(Base):
+    __tablename__ = "batches"
+
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(String(200))
+    origin: Mapped[str] = mapped_column(String(20))  # upload|folder
+    watch_folder_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("watch_folders.id", ondelete="SET NULL"))
+    recipe: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open|running|paused|completed|cancelled
+    state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # e.g. the next free posting slot
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+
+class BatchItem(Base):
+    __tablename__ = "batch_items"
+    __table_args__ = (UniqueConstraint("batch_id", "filename", "size_bytes", "mtime"),)
+
+    id: Mapped[uuid.UUID] = _pk()
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("batches.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(1000))  # path inside the folder, or the uploaded file's name
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    mtime: Mapped[int] = mapped_column(BigInteger, default=0)
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("media_assets.id", ondelete="SET NULL"))
+    project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|copying|started|duplicate|failed|cancelled
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
 
 
 class Publication(Base):

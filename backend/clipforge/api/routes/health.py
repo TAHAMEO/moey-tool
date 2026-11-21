@@ -75,6 +75,9 @@ def diagnostics(db: Session = Depends(get_db), _: Principal = Depends(admin)) ->
     checks["models"] = model_registry.status()
     checks["transcription_engines"] = engines_status()
     checks["memory"] = memory_check()
+    from ...ingestion import public_download
+
+    checks["downloader"] = public_download.available()
     settings = get_settings()
     checks["config"] = {
         "env": settings.env,

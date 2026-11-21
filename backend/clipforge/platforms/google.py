@@ -13,7 +13,7 @@ import hashlib
 import logging
 import secrets
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, time, timedelta
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -172,7 +172,8 @@ def revoke(db: Session, account: SocialAccount) -> None:
 
 
 # YouTube quota resets at midnight Pacific Time.
-QUOTA_COST = {"videos.list": 1, "channels.list": 1, "videos.insert": 1600, "captions.insert": 400, "captions.list": 50,
+QUOTA_COST = {"videos.list": 1, "channels.list": 1, "videos.insert": 1600, "videos.update": 50, "captions.insert": 400,
+              "captions.list": 50,
               "captions.download": 200, "captions.update": 450, "thumbnails.set": 50, "playlistItems.insert": 50,
               "search.list": 100}
 DAILY_QUOTA = 10_000
@@ -189,6 +190,13 @@ def record_quota(db: Session, operation: str) -> int:
     row.calls += 1
     db.flush()
     return row.units
+
+
+def next_quota_reset() -> datetime:
+    """A few minutes after the next midnight Pacific Time, when the daily quota is restored."""
+    pacific = ZoneInfo("America/Los_Angeles")
+    tomorrow = utcnow().astimezone(pacific).date() + timedelta(days=1)
+    return datetime.combine(tomorrow, time(0, 10), pacific).astimezone(UTC)
 
 
 def quota_remaining(db: Session) -> int:

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import uuid
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy.orm import Session
 
 from ..db.models import AppSetting
@@ -42,6 +43,27 @@ class PublishingSettings(_Section):
     youtube_category_id: str = "22"
     youtube_playlist_id: str | None = None
     made_for_kids: bool = False
+    #: IANA time zone used for schedules, "tomorrow at 6pm" and daily limits.
+    timezone: str = "UTC"
+    #: A held post whose time passed while CLIPFORGE was not running is still
+    #: published if it is at most this late; otherwise it waits for the owner.
+    late_grace_minutes: int = Field(180, ge=5, le=10080)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"Unknown time zone {value!r}") from exc
+        return value
+
+
+class SourceSettings(_Section):
+    #: Download videos anyone can watch from YouTube/Instagram links with yt-dlp (never private,
+    #: members-only, age-restricted, paid or DRM videos; never with a login). The owner must have
+    #: the rights to reuse what is downloaded.
+    public_downloads: bool = True
 
 
 class ControlSettings(_Section):
@@ -91,6 +113,7 @@ class UISettings(_Section):
 SECTIONS: dict[str, type[_Section]] = {
     "ai": AISettings,
     "publishing": PublishingSettings,
+    "sources": SourceSettings,
     "control": ControlSettings,
     "clips": ClipSettings,
     "brand": BrandSettings,

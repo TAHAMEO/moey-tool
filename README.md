@@ -69,7 +69,8 @@ Open http://localhost:3000, create the owner account, then:
 3. **Brain Chat** — paste a link and say what you want.
 
 For a public server with HTTPS: `./scripts/install.sh --domain clips.example.com`
-(see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+(see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). On Windows, use Docker Desktop with WSL 2 —
+step by step in [docs/INSTALL.md](docs/INSTALL.md#windows).
 
 Optional local language models (no API costs): `docker compose --profile local-ai up -d`,
 then add *Ollama (local)* in AI Connections with `http://ollama:11434/v1`.

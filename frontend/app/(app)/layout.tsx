@@ -5,7 +5,9 @@ import { BarChart3, Bot, Brain, Clapperboard, GraduationCap, LogOut, Menu, Moon,
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { browserZone } from "@/components/schedule";
 import { Spinner } from "@/components/ui";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 
@@ -42,12 +44,28 @@ function ThemeToggle() {
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { me, ready, signOut } = useAuth();
+  const { me, ready, signOut, can } = useAuth();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const { data: settings } = useResource<{ control: { paused: boolean; emergency_stop: boolean } }>(me ? "/settings" : null, { poll: 15000 });
+  const { data: settings } = useResource<{ control: { paused: boolean; emergency_stop: boolean }; publishing: { timezone: string } }>(
+    me ? "/settings" : null, { poll: 15000 });
 
   useEffect(() => setOpen(false), [pathname]);
+
+  // Schedules default to UTC; adopt the owner's own time zone once (it can be changed in Settings → Publishing).
+  const zone = settings?.publishing?.timezone;
+  useEffect(() => {
+    if (!zone || zone !== "UTC" || !can("admin")) return;
+    const local = browserZone();
+    if (local === "UTC") return;
+    try {
+      if (localStorage.getItem("cf-tz-adopted")) return;
+      localStorage.setItem("cf-tz-adopted", local);
+    } catch {
+      return; // no storage: don't risk repeating the change on every visit
+    }
+    api("/settings/publishing", { method: "PATCH", body: { timezone: local } }).catch(() => undefined);
+  }, [zone, can]);
 
   if (!ready || !me) {
     return (

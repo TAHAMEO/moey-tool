@@ -11,10 +11,14 @@ simplest authorised alternatives. Access methods, in priority order:
 4. authorised media storage integrations   (Google Drive, owner media library)
 5. direct media URLs supplied by the owner (SSRF-hardened, rights attested)
 6. authorised live ingest feeds            (owner pushes RTMP/SRT to CLIPFORGE)
+7. public download with yt-dlp            (owner-enabled; videos anyone can watch
+                                           without signing in — see public_download.py)
 
-Never used: third-party downloaders, scraping, DRM/paywall/login circumvention.
-YouTube's API offers no general video download and Instagram's API only exposes
-the connected account's own media — the resolver says so plainly.
+Never used: logins, cookies, DRM/paywall/age/membership circumvention, faked
+locations. YouTube's API offers no video download and Instagram's API only
+exposes the connected account's own media; when public downloads are switched
+off the resolver says so plainly, and when a download turns out to need a login
+the project reports that state instead.
 """
 
 from __future__ import annotations
@@ -56,8 +60,33 @@ STATES = (FULL_MEDIA_ACCESS, TRANSCRIPT_ONLY, METADATA_ONLY, AUTHORIZED_LIVE_FEE
 PROCESSABLE = (FULL_MEDIA_ACCESS, REPLAY_ACCESSIBLE, AUTHORIZED_LIVE_FEED)
 INSTAGRAM_CDN = re.compile(r"(^|\.)(cdninstagram\.com|fbcdn\.net)$")
 
-NO_DOWNLOAD_NOTE = ("YouTube's official API does not provide video downloads, and CLIPFORGE does not use third-party "
-                    "downloaders.")
+NO_DOWNLOAD_NOTE = ("YouTube's official API does not provide video downloads, and downloading public videos is switched "
+                    "off in Settings → Sources.")
+PUBLIC_DOWNLOAD_NOTE = ("Use it only if you own the video or have permission to reuse it.")
+
+
+def public_downloads_enabled(db: Session) -> bool:
+    from ..services import app_settings
+
+    return app_settings.get_section(db, "sources").public_downloads
+
+
+def _why_no_download(db: Session, res: AccessResult) -> str:
+    if not public_downloads_enabled(db):
+        return NO_DOWNLOAD_NOTE
+    if res.metadata.get("age_restricted"):
+        return "It's age-restricted, and CLIPFORGE doesn't sign in to YouTube to download it."
+    return "It isn't public, so it can't be downloaded without signing in (which CLIPFORGE doesn't do)."
+
+
+def _use_public_download(res: AccessResult, source: Source, *, replay: bool = False, why: str) -> AccessResult:
+    res.state = REPLAY_ACCESSIBLE if replay else FULL_MEDIA_ACCESS
+    res.method = "public_download"
+    res.capabilities["media"] = True
+    res.acquire = {"url": source.normalized_url or source.original_url, "platform": source.platform}
+    res.reasons.append(f"{why} I'll download it with yt-dlp. {PUBLIC_DOWNLOAD_NOTE}")
+    res.check("public_download", "enabled in Settings → Sources; no sign-in is used")
+    return res
 
 
 @dataclass
@@ -104,6 +133,8 @@ ALT = {
     "live_ingest": {"action": "live_ingest", "label": "Send your stream to CLIPFORGE from OBS/your encoder (live ingest)", "href": "/settings#live"},
     "wait_replay": {"action": "wait_replay", "label": "I can process the replay after the stream ends, once the recording file is available", "href": "/"},
     "permission": {"action": "permission", "label": "Ask the creator for permission and their original file", "href": "/"},
+    "enable_downloads": {"action": "enable_downloads", "label": "Allow downloading public videos (Settings → Sources)",
+                         "href": "/settings#sources"},
 }
 
 
@@ -206,6 +237,8 @@ def _resolve_youtube(db: Session, source: Source) -> AccessResult:
             "privacy": (item.get("status") or {}).get("privacyStatus"),
             "thumbnail_url": ((snippet.get("thumbnails") or {}).get("high") or {}).get("url"),
             "has_captions": (item.get("contentDetails") or {}).get("caption") == "true",
+            "age_restricted": ((item.get("contentDetails") or {}).get("contentRating") or {}).get("ytRating") == "ytAgeRestricted",
+            "license": (item.get("status") or {}).get("license"),
         })
         res.live_status = youtube.live_status(item)
         if res.live_status != "none":
@@ -249,6 +282,9 @@ def _resolve_youtube(db: Session, source: Source) -> AccessResult:
         res.acquire = {"await_live": True}
         return res
 
+    downloadable = public_downloads_enabled(db) and res.metadata.get("privacy") in (None, "public", "unlisted") \
+        and not res.metadata.get("age_restricted")
+    replay = res.live_status == "ended"
     # --- owner's media (original file) -----------------------------------------
     if res.owned:
         master = _match_master(db, res.metadata.get("title") or "", res.metadata.get("duration_s") or 0.0, res)
@@ -259,6 +295,9 @@ def _resolve_youtube(db: Session, source: Source) -> AccessResult:
             res.acquire = master
             res.reasons.append("Found your original file in your connected media library.")
             return res
+        if downloadable:
+            return _use_public_download(res, source, replay=replay,
+                                        why="This is your video and it's viewable without signing in, so")
         try:
             tracks = youtube.captions_list(youtube.Auth(access_token=google.access_token(db, account)), source.external_id)
             google.record_quota(db, "captions.list")
@@ -277,12 +316,26 @@ def _resolve_youtube(db: Session, source: Source) -> AccessResult:
         except PlatformError as exc:
             res.check("owner_captions", f"unavailable: {exc}")
         res.state = METADATA_ONLY
-        res.reasons.append("This is your video, but I couldn't find its original file. " + NO_DOWNLOAD_NOTE)
+        res.reasons.append("This is your video, but I couldn't find its original file. " + _why_no_download(db, res))
         res.alternatives += [ALT["connect_drive"], ALT["upload"], ALT["direct_link"]]
         return res
 
+    if res.metadata.get("age_restricted"):
+        res.state = LOGIN_REQUIRED
+        res.reasons.append("YouTube only shows this video to signed-in adults (age-restricted). CLIPFORGE doesn't sign in "
+                           "to YouTube to get around that.")
+        res.alternatives += [ALT["upload"], ALT["permission"]]
+        return res
+    if res.metadata.get("privacy") == "private":
+        res.state = SOURCE_PRIVATE
+        res.reasons.append("This video is private, so only its owner can use it.")
+        res.alternatives += [ALT["upload"], ALT["permission"]]
+        return res
+    if downloadable:
+        return _use_public_download(res, source, replay=replay, why="This video is public, so")
     res.state = METADATA_ONLY
     res.reasons.append(NO_DOWNLOAD_NOTE + " I can read this video's public details, but not its media.")
+    res.alternatives.append(ALT["enable_downloads"])
     if account is None:
         res.alternatives.append(ALT["connect_youtube"])
     res.alternatives += [ALT["upload"], ALT["drive_link"], ALT["permission"]]
@@ -337,6 +390,10 @@ def _resolve_instagram(db: Session, source: Source) -> AccessResult:
         res.check("instagram_oembed", "public metadata available")
     elif get_settings().meta_client_token is None:
         res.check("instagram_oembed", "Meta app client token not configured (oEmbed Read feature needed)")
+    if public_downloads_enabled(db) and source.source_type != "story":
+        res.reasons.append("Instagram shows many posts only to signed-in users; if this one needs a sign-in I'll tell you "
+                           "rather than work around it.")
+        return _use_public_download(res, source, why="This looks like a public post, so")
     if account is None:
         res.state = LOGIN_REQUIRED if not meta else METADATA_ONLY
         res.reasons.append("Instagram only lets apps access media from the creator's own connected professional account.")
@@ -346,6 +403,7 @@ def _resolve_instagram(db: Session, source: Source) -> AccessResult:
         res.reasons.append("This Reel isn't from your connected account, and Instagram's API doesn't allow access to other "
                            "accounts' media.")
         res.alternatives += [ALT["permission"], ALT["upload"]]
+    res.alternatives.append(ALT["enable_downloads"])
     return res
 
 

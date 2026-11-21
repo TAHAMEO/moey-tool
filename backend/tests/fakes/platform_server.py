@@ -36,6 +36,8 @@ class FakePlatforms:
         self.requests: list[dict] = []
         self.analytics_rows: dict[str, list] = {}
         self.ig_insights: dict[str, dict] = {}
+        self.video_updates: list[dict] = []
+        self.publish_calls: list[float] = []  # time.time() of each Instagram media_publish
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -168,6 +170,9 @@ class FakePlatforms:
                     server.containers[m.group(1)]["uploaded"] = len(body) == int(self.headers.get("file_size", -1))
                     return self._send(200, {"success": True})
                 if m := re.fullmatch(r"/v[\d.]+/(\d+)/media_publish", path):
+                    import time as _time
+
+                    server.publish_calls.append(_time.time())
                     cid = {**q, **form}["creation_id"]
                     mid = str(17900000000000000 + len(server.published) + 1)
                     server.published[mid] = {"id": mid, "permalink": f"https://www.instagram.com/reel/FAKE{mid[-4:]}/",
@@ -178,7 +183,23 @@ class FakePlatforms:
 
             # ---------------------------------------------------------------- PUT
             def do_PUT(self):
-                path, _q, body = self._route("PUT")
+                path, q, body = self._route("PUT")
+                if path == "/youtube/v3/videos":  # videos.update (part=status or part=snippet)
+                    data = json.loads(body or b"{}")
+                    video = server.uploaded_videos.get(data.get("id")) or server.videos.get(data.get("id"))
+                    if video is None:
+                        return self._send(404, {"error": {"code": 404, "message": "videoNotFound",
+                                                          "errors": [{"reason": "videoNotFound"}]}})
+                    part = q.get("part")
+                    server.video_updates.append({"id": data["id"], "part": part, "body": data.get(part)})
+                    if part == "status":
+                        keep = {k: v for k, v in video["status"].items() if k in ("uploadStatus",)}
+                        video["status"] = {**keep, **data["status"]}
+                    elif part == "snippet":
+                        if not data["snippet"].get("title") or not data["snippet"].get("categoryId"):
+                            return self._send(400, {"error": {"code": 400, "message": "title and categoryId are required"}})
+                        video["snippet"] = data["snippet"]
+                    return self._send(200, {"id": data["id"], part: video.get(part)})
                 m = re.fullmatch(r"/upload-session/(\w+)", path)
                 if not m or m.group(1) not in server.uploads:
                     return self._send(404, {})
@@ -233,6 +254,12 @@ class FakePlatforms:
         }
         if not details:
             del self.videos[video_id]["liveStreamingDetails"]
+
+    def go_live(self, video_id: str) -> None:
+        """What YouTube's scheduler does at publishAt: the private video becomes public."""
+        status = self.uploaded_videos[video_id]["status"]
+        status.pop("publishAt", None)
+        status["privacyStatus"] = "public"
 
     def __enter__(self) -> Self:
         self.thread.start()

@@ -44,7 +44,16 @@ def resolve(source_id) -> rs.AccessResult:
         return rs.resolve(db, db.get(Source, source_id))
 
 
+def official_only() -> None:
+    """Switch public downloads off: only official APIs and the owner's own files are used."""
+    from clipforge.services import app_settings
+
+    with session_scope() as db:
+        app_settings.update_section(db, "sources", {"public_downloads": False})
+
+
 def test_youtube_third_party_video_is_metadata_only(platforms, monkeypatch):
+    official_only()
     monkeypatch.setenv("CLIPFORGE_YOUTUBE_API_KEY", "AIza-test")
     get_settings.cache_clear()
     platforms.add_video("aaaaaaaaaaa", title="Someone else's talk", channel_id="UC_OTHER")
@@ -53,12 +62,13 @@ def test_youtube_third_party_video_is_metadata_only(platforms, monkeypatch):
     assert res.capabilities == {"metadata": True, "transcript": False, "media": False, "live": False}
     assert res.metadata["title"] == "Someone else's talk"
     assert any("does not provide video downloads" in r for r in res.reasons)
-    assert {a["action"] for a in res.alternatives} >= {"connect_youtube", "upload"}
+    assert {a["action"] for a in res.alternatives} >= {"connect_youtube", "upload", "enable_downloads"}
     key_param = next(r for r in platforms.requests if r["path"] == "/youtube/v3/videos")["query"]
     assert key_param["key"] == "AIza-test"
 
 
 def test_youtube_without_credentials_uses_oembed_and_detects_private(platforms):
+    official_only()
     platforms.add_video("bbbbbbbbbbb", title="Public one")
     platforms.add_video("ccccccccccc", title="Private one", privacy="private")
     public = resolve(make_source("https://youtu.be/bbbbbbbbbbb"))
@@ -68,6 +78,7 @@ def test_youtube_without_credentials_uses_oembed_and_detects_private(platforms):
 
 
 def test_owned_video_with_captions_is_transcript_only(platforms):
+    official_only()
     connect("youtube", "UC_OWNER")
     platforms.add_video("ddddddddddd", title="My own talk", captions=True)
     platforms.captions["ddddddddddd"] = [{"id": "cap1", "snippet": {"language": "en", "trackKind": "standard"}}]
@@ -120,6 +131,7 @@ def test_livestream_states(platforms):
 
 
 def test_instagram_states_and_cdn_guard(platforms):
+    official_only()
     not_connected = resolve(make_source("https://www.instagram.com/reel/AbCdEf12345/"))
     assert not_connected.state == rs.LOGIN_REQUIRED
     connect("instagram", platforms.ig_user_id)
@@ -241,6 +253,7 @@ Never compete on price. Compete on value instead.
 
 
 def test_transcript_only_workflow_never_claims_visual_analysis(platforms):
+    official_only()
     connect("youtube", "UC_OWNER")
     platforms.add_video("iiiiiiiiiii", title="Owner talk", captions=True)
     platforms.captions["iiiiiiiiiii"] = [{"id": "capX", "snippet": {"language": "en", "trackKind": "standard"}}]
@@ -256,6 +269,7 @@ def test_transcript_only_workflow_never_claims_visual_analysis(platforms):
 
 
 def test_metadata_only_workflow_reports_access_required(platforms, monkeypatch):
+    official_only()
     monkeypatch.setenv("CLIPFORGE_YOUTUBE_API_KEY", "AIza-test")
     get_settings.cache_clear()
     platforms.add_video("jjjjjjjjjjj", title="Not mine", channel_id="UC_OTHER")
@@ -272,3 +286,56 @@ def test_live_without_feed_waits_for_live_source(platforms):
     assert job.status == "waiting" and job.status_label == "Waiting for live source"
     assert project.status_label == "Waiting for live source"
     assert job.checkpoint["waiting"]["type"] == "live_wait"
+
+
+# ---------------------------------------------------------------- public downloads (owner-enabled, default on)
+def test_public_youtube_video_is_downloaded_with_a_rights_note(platforms, monkeypatch):
+    monkeypatch.setenv("CLIPFORGE_YOUTUBE_API_KEY", "AIza-test")
+    get_settings.cache_clear()
+    platforms.add_video("ppppppppppp", title="A public talk", channel_id="UC_OTHER")
+    res = resolve(make_source("https://www.youtube.com/shorts/ppppppppppp"))
+    assert res.state == rs.FULL_MEDIA_ACCESS and res.method == "public_download"
+    assert res.acquire == {"url": "https://www.youtube.com/watch?v=ppppppppppp", "platform": "youtube"}
+    assert any("yt-dlp" in r and "own the video or have permission" in r for r in res.reasons)
+    assert any(c["check"] == "public_download" for c in res.checks)
+    # Without any Google credentials, oEmbed is enough to know it's public.
+    monkeypatch.delenv("CLIPFORGE_YOUTUBE_API_KEY")
+    get_settings.cache_clear()
+    platforms.add_video("qqqqqqqqqqq", title="Another public one")
+    assert resolve(make_source("https://youtu.be/qqqqqqqqqqq")).method == "public_download"
+
+
+def test_downloads_never_cover_private_age_restricted_or_live_videos(platforms, monkeypatch):
+    monkeypatch.setenv("CLIPFORGE_YOUTUBE_API_KEY", "AIza-test")
+    get_settings.cache_clear()
+    platforms.add_video("rrrrrrrrrrr", title="Adults only", channel_id="UC_OTHER")
+    platforms.videos["rrrrrrrrrrr"]["contentDetails"]["contentRating"] = {"ytRating": "ytAgeRestricted"}
+    adult = resolve(make_source("https://www.youtube.com/watch?v=rrrrrrrrrrr"))
+    assert adult.state == rs.LOGIN_REQUIRED and adult.method is None and "doesn't sign in" in adult.reasons[0]
+    platforms.add_video("sssssssssss", title="Live now", channel_id="UC_OTHER", live="live")
+    live = resolve(make_source("https://www.youtube.com/live/sssssssssss"))
+    assert live.method != "public_download" and live.acquire == {"await_live": True}
+    platforms.add_video("ttttttttttt", title="Yesterday's stream", channel_id="UC_OTHER", ended=True)
+    replay = resolve(make_source("https://www.youtube.com/live/ttttttttttt"))
+    assert replay.state == rs.REPLAY_ACCESSIBLE and replay.method == "public_download"
+    platforms.add_video("uuuuuuuuuuu", title="Hidden", privacy="private")
+    assert resolve(make_source("https://youtu.be/uuuuuuuuuuu")).state == rs.SOURCE_PRIVATE
+
+
+def test_owned_video_prefers_the_master_file_then_a_download_over_captions(platforms):
+    connect("youtube", "UC_OWNER")
+    platforms.add_video("vvvvvvvvvvv", title="My own talk", captions=True)
+    platforms.captions["vvvvvvvvvvv"] = [{"id": "cap1", "snippet": {"language": "en", "trackKind": "standard"}}]
+    res = resolve(make_source("https://www.youtube.com/watch?v=vvvvvvvvvvv"))
+    assert res.owned and res.state == rs.FULL_MEDIA_ACCESS and res.method == "public_download"
+
+
+def test_instagram_posts_from_other_accounts_try_a_public_download(platforms):
+    res = resolve(make_source("https://www.instagram.com/reel/Pub123456/"))
+    assert res.state == rs.FULL_MEDIA_ACCESS and res.method == "public_download"
+    assert any("signed-in users" in r for r in res.reasons)
+    connect("instagram", platforms.ig_user_id)
+    platforms.ig_media = [{"id": "1790099", "media_type": "VIDEO", "media_product_type": "REELS", "shortcode": "Own123456",
+                           "permalink": "https://www.instagram.com/reel/Own123456/", "media_url": f"{platforms.base}/cdn/fresh.mp4"}]
+    own = resolve(make_source("https://www.instagram.com/reel/Own123456/"))
+    assert own.method == "instagram_own_media"  # the official API is always preferred for the owner's own Reels

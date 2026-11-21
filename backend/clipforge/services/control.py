@@ -37,6 +37,7 @@ def apply(db: Session, action: str, *, user_id: uuid.UUID | None, ip: str | None
     current = app_settings.get_section(db, "control")
     patch: dict = {}
     cancelled = 0
+    unscheduled = 0
     if action == "pause":
         patch["paused"] = True
     elif action == "resume":
@@ -47,6 +48,10 @@ def apply(db: Session, action: str, *, user_id: uuid.UUID | None, ip: str | None
         from ..jobs import queue
 
         cancelled = queue.cancel_all_active(db, reason="Emergency stop")
+        from ..publishing import schedule
+
+        # Every scheduled post is cancelled too; videos already waiting on YouTube are made private.
+        unscheduled = schedule.cancel_all(db, reason="Emergency stop")
     elif action == "clear_emergency":
         patch["emergency_stop"] = False
     elif action in {"disable_integration", "enable_integration"}:
@@ -56,8 +61,13 @@ def apply(db: Session, action: str, *, user_id: uuid.UUID | None, ip: str | None
         (items.add if action == "disable_integration" else items.discard)(integration)
         patch["disabled_integrations"] = sorted(items)
     updated = app_settings.update_section(db, "control", patch, user_id=user_id, ip=ip)
-    audit(db, f"control.{action}", user_id=user_id, details={"cancelled_jobs": cancelled, "integration": integration}, ip=ip)
-    return {**updated.model_dump(), "cancelled_jobs": cancelled}
+    if action in {"disable_integration", "enable_integration"} and (integration or "").startswith("publish:"):
+        from ..publishing import schedule
+
+        schedule.kick(db)  # hold or release videos that wait on YouTube's scheduler right away
+    audit(db, f"control.{action}", user_id=user_id,
+          details={"cancelled_jobs": cancelled, "unscheduled_posts": unscheduled, "integration": integration}, ip=ip)
+    return {**updated.model_dump(), "cancelled_jobs": cancelled, "unscheduled_posts": unscheduled}
 
 
 def is_paused(db: Session) -> bool:

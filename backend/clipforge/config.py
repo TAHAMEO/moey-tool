@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     max_upload_mb: int = 4096
     max_download_mb: int = 8192
     max_source_duration_hours: float = 6.0
+    #: Root of the folders CLIPFORGE may watch for new videos (default: <data_dir>/inbox).
+    inbox_dir: Path | None = None
+    #: How often watched folders are checked for new videos.
+    folder_scan_seconds: int = 60
     ffmpeg_threads: int = 0
     vosk_model_path: Path | None = None
     whisperx_python: Path | None = None  # interpreter of the isolated WhisperX venv
@@ -159,6 +163,11 @@ class Settings(BaseSettings):
         return self.data_dir / "library"
 
     @property
+    def inbox(self) -> Path:
+        """Watched folders live here (Docker: the host folder mounted at ``/inbox``)."""
+        return self.inbox_dir or self.data_dir / "inbox"
+
+    @property
     def sync_database_url(self) -> str:
         return self.database_url
 
@@ -171,6 +180,10 @@ class Settings(BaseSettings):
         for path in (self.data_dir, self.models_dir, self.media_dir, self.work_dir,
                      self.backups_dir, self.library_dir):
             path.mkdir(parents=True, exist_ok=True)
+        try:
+            self.inbox.mkdir(parents=True, exist_ok=True)
+        except OSError:  # a read-only or not-yet-mounted inbox is reported by the folder views instead
+            pass
 
     def resolved_master_keys(self) -> list[bytes]:
         """Return [current, *previous] decoded keys (may be empty in media workers)."""

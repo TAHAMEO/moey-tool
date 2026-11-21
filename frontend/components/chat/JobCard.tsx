@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, ExternalLink, RotateCcw, XCircle } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { choiceIso, choiceProblem, defaultChoice, formatWhen, SchedulePicker, type ScheduleChoice } from "@/components/schedule";
 import { AccessBadge, ACCESS_LABELS, PIPELINE_STEPS, StatusBadge, stepIndex } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, ProgressBar } from "@/components/ui";
@@ -21,6 +22,9 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const requested = job?.waiting?.schedule ?? null;
+  const [when, setWhen] = useState<ScheduleChoice | null>(null);
+  const choice = when ?? defaultChoice(requested?.at, requested?.every_minutes);
 
   if (!job) {
     return <div className="skeleton mt-3 h-24 w-full max-w-xl" />;
@@ -47,10 +51,14 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
   async function approve(publish: boolean) {
     const packages = job?.waiting?.packages ?? [];
     const approved = publish ? packages.filter((p) => selected[p.package_id] ?? (p.qc_passed && !p.review_words)).map((p) => p.package_id) : [];
+    const at = publish ? choiceIso(choice) : null;
     setBusy(true);
     try {
-      await api(`/jobs/${jobId}/approve`, { body: { approved } });
-      toast("success", approved.length ? `Publishing ${approved.length} package(s).` : "Finished without publishing.");
+      await api(`/jobs/${jobId}/approve`, {
+        body: at ? { approved, scheduled_at: at, every_minutes: choice.everyMinutes } : { approved, publish_now: true },
+      });
+      toast("success", !approved.length ? "Finished without publishing."
+        : at ? `Scheduled ${approved.length} package(s) from ${formatWhen(at)}.` : `Publishing ${approved.length} package(s).`);
       reload();
     } catch (err) {
       toast("error", err instanceof Error ? err.message : "Approval failed");
@@ -133,6 +141,13 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
       {awaitingApproval && (
         <div className="mt-3 rounded-xl border border-primary/30 bg-primary-soft/50 p-3">
           <p className="text-[13px] font-medium">Ready to publish — choose what goes live</p>
+          {job.waiting?.rights === "third_party_download" && (
+            <p className="mt-1.5 flex gap-1.5 rounded-lg bg-warning-soft px-2.5 py-1.5 text-[12px] text-warning">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              These clips come from another creator's public video. Publish them only if you have their permission (or the
+              video's license allows reuse) — otherwise your account can get copyright strikes.
+            </p>
+          )}
           <ul className="mt-2 space-y-1.5">
             {(job.waiting?.packages ?? []).map((pkg) => {
               const flagged = !pkg.qc_passed || pkg.review_words > 0;
@@ -148,8 +163,18 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
               );
             })}
           </ul>
+          <div className="mt-3">
+            <SchedulePicker value={choice} onChange={setWhen}
+              platforms={[...new Set((job.waiting?.packages ?? []).map((p) => p.platform))]} privacy={project?.clips[0]?.packages.find((p) => p.platform === "youtube")?.privacy}
+              clips={new Set((job.waiting?.packages ?? []).map((p) => p.rank)).size} />
+            {requested?.assumed_time && choice.mode === "later" && !when && (
+              <p className="mt-1.5 text-[12px] text-muted">No time of day was given in chat, so 09:00 is filled in — change it if you like.</p>
+            )}
+          </div>
           <div className="mt-3 flex gap-2">
-            <Button size="sm" loading={busy} onClick={() => approve(true)}>Approve & publish</Button>
+            <Button size="sm" loading={busy} disabled={Boolean(choiceProblem(choice))} onClick={() => approve(true)}>
+              {choice.mode === "later" ? "Approve & schedule" : "Approve & publish"}
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => approve(false)}>Not now</Button>
           </div>
         </div>

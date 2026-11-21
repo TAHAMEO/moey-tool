@@ -197,6 +197,41 @@ def video_status(auth: Auth, video_id: str) -> dict | None:
     return items[0] if items else None
 
 
+#: ``status`` properties a videos.update request may send. Anything left out of an
+#: update is reset by YouTube, so updates always start from the video's current values.
+WRITABLE_STATUS = ("privacyStatus", "publishAt", "embeddable", "license", "publicStatsViewable",
+                   "selfDeclaredMadeForKids", "containsSyntheticMedia")
+
+
+def update_status(auth: Auth, video_id: str, current: dict, changes: dict) -> dict:
+    """Change privacy/schedule while keeping every other status property as it is."""
+    body = {k: v for k, v in (current or {}).items() if k in WRITABLE_STATUS}
+    body.update({k: v for k, v in changes.items() if v is not None})
+    for key in [k for k, v in changes.items() if v is None]:
+        body.pop(key, None)  # e.g. publishAt=None removes the schedule
+    response = request("youtube", "PUT", f"{_api()}/videos", params={"part": "status"},
+                       headers={**auth.headers(), "Content-Type": "application/json"},
+                       content=json.dumps({"id": video_id, "status": body}).encode())
+    if response.status_code != 200:
+        raise google_error(response)
+    return response.json()
+
+
+WRITABLE_SNIPPET = ("title", "description", "tags", "categoryId", "defaultLanguage", "defaultAudioLanguage")
+
+
+def update_snippet(auth: Auth, video_id: str, current: dict, changes: dict) -> dict:
+    """Change title/description/tags; other snippet properties keep their current values."""
+    body = {k: v for k, v in (current or {}).items() if k in WRITABLE_SNIPPET}
+    body.update(changes)
+    response = request("youtube", "PUT", f"{_api()}/videos", params={"part": "snippet"},
+                       headers={**auth.headers(), "Content-Type": "application/json"},
+                       content=json.dumps({"id": video_id, "snippet": body}).encode())
+    if response.status_code != 200:
+        raise google_error(response)
+    return response.json()
+
+
 def insert_caption(auth: Auth, video_id: str, language: str, name: str, srt_text: str) -> dict:
     boundary = f"clipforge-{uuid.uuid4().hex}"
     metadata = json.dumps({"snippet": {"videoId": video_id, "language": language, "name": name, "isDraft": False}})

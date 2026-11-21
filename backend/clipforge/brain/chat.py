@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import timedelta
 from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -42,6 +43,7 @@ from ..ingestion.urls import detect, display_name
 from ..jobs import queue
 from ..providers.base import ChatMessage, NoProviderAvailable
 from ..providers.hub import TaskSpec, hub
+from ..publishing import schedule, when
 from ..security.untrusted import GUARD_INSTRUCTION
 from ..services import app_settings, auth, control
 from . import intents
@@ -61,6 +63,7 @@ class ChatState(TypedDict, total=False):
     user_id: str
     user_role: str
     text: str
+    timezone: str  # the browser's IANA zone, for "tomorrow at 6pm"
     attachments: list[str]
     parsed: dict
     memories: list[dict]
@@ -189,9 +192,12 @@ def _act_process(state: ChatState) -> ChatState:
     started: list[dict] = []
     problems: list[dict] = []
     user_id = uuid.UUID(state["user_id"])
+    wanted, tzname, time_problem = _wanted_time(state) if parsed.get("publish") else (None, "", None)
     with session_scope() as db:
         clips = app_settings.get_section(db, "clips")
         params = _request_params(parsed, clips)
+        if wanted is not None:
+            params["schedule"] = {**wanted.to_dict(), "timezone": tzname}
         sources: list[tuple[str, dict]] = []
         for url in parsed.get("urls", [])[:5]:
             detected = detect(url)
@@ -260,8 +266,13 @@ def _act_process(state: ChatState) -> ChatState:
             actions.append({"step": "Started production", "detail": f"{params['count']} clip(s), {', '.join(params['aspects'])}, "
                                                                    f"for {', '.join(display_name(p) for p in params['platforms'])}"})
         paused = control.is_paused(db)
-    return {"actions": actions, "cards": cards,
-            "facts": {"started": started, "problems": problems, "params": params, "paused": paused}}
+    facts = {"started": started, "problems": problems, "params": params, "paused": paused}
+    if wanted is not None:
+        facts["schedule"] = {"text": when.describe(wanted.at, tzname), "every_minutes": wanted.every_minutes,
+                             "assumed_time": wanted.assumed_time}
+    if time_problem:
+        facts["time_problem"] = time_problem
+    return {"actions": actions, "cards": cards, "facts": facts}
 
 
 def _act_status(state: ChatState) -> ChatState:
@@ -314,6 +325,9 @@ def _latest_project_with_packages(db) -> Project | None:
 def _act_publish(state: ChatState, *, approve_only: bool = False) -> ChatState:
     _require(state, "editor")
     parsed = state["parsed"]
+    wanted, tzname, time_problem = _wanted_time(state)
+    if time_problem:
+        return {"facts": {"time_problem": time_problem}, "actions": [{"step": "Read the time", "detail": time_problem}]}
     with session_scope() as db:
         policy = app_settings.get_section(db, "publishing").policy
         if policy == "draft_only":
@@ -328,11 +342,24 @@ def _act_publish(state: ChatState, *, approve_only: bool = False) -> ChatState:
             chosen = [p for p in packages if not parsed.get("clip_refs") or p.get("rank") in parsed["clip_refs"]]
             if parsed.get("platforms"):
                 chosen = [p for p in chosen if p.get("platform") in parsed["platforms"]]
-            queue.resume_with(db, job.id, {"approved": [p["package_id"] for p in chosen], "by": state["user_id"]},
-                              label="Publishing approved clips")
-            return {"facts": {"approved": len(chosen), "project_id": str(job.project_id)},
+            times: dict = {}
+            if wanted is not None and chosen:
+                entries = [(db.get(OutputPackage, uuid.UUID(p["package_id"])), int(p.get("rank") or 0)) for p in chosen]
+                try:
+                    times = schedule.apply_plan(db, [(pkg, r) for pkg, r in entries if pkg], wanted.at, wanted.every_minutes)
+                except schedule.ScheduleError as exc:
+                    return {"facts": {"schedule_error": str(exc)}, "actions": [{"step": "Checked the schedule", "detail": str(exc)}]}
+            queue.resume_with(db, job.id, {"approved": [p["package_id"] for p in chosen], "by": state["user_id"],
+                                           "scheduled": {k: v.isoformat() for k, v in times.items()}},
+                              label="Scheduling approved clips" if times else "Publishing approved clips")
+            facts = {"approved": len(chosen), "project_id": str(job.project_id)}
+            if times:
+                facts["scheduled"] = {"count": len(times), "text": _describe_plan(list(times.values()), tzname),
+                                      "modes": sorted({schedule.mode(db.get(OutputPackage, uuid.UUID(k))) for k in times})}
+            return {"facts": facts,
                     "cards": [{"type": "job", "job_id": str(job.id), "project_id": str(job.project_id)}],
-                    "actions": [{"step": "Approved publishing", "detail": f"{len(chosen)} package(s)"}]}
+                    "actions": [{"step": "Approved publishing", "detail": f"{len(chosen)} package(s)"
+                                 + (f", scheduled {facts['scheduled']['text']}" if times else "")}]}
         if approve_only:
             return {"facts": {"approved": 0, "nothing_waiting": True}, "actions": [{"step": "Checked approvals", "detail": "none pending"}]}
         project = _latest_project_with_packages(db)
@@ -344,12 +371,28 @@ def _act_publish(state: ChatState, *, approve_only: bool = False) -> ChatState:
         chosen = [(pkg, clip) for pkg, clip in rows
                   if (not parsed.get("clip_refs") or clip.rank in parsed["clip_refs"])
                   and (not parsed.get("platforms") or pkg.platform in parsed["platforms"])]
+        user_id = uuid.UUID(state["user_id"])
+        if wanted is not None and chosen:
+            try:
+                times = schedule.apply_plan(db, [(pkg, clip.rank) for pkg, clip in chosen], wanted.at, wanted.every_minutes)
+            except schedule.ScheduleError as exc:
+                return {"facts": {"schedule_error": str(exc)}, "actions": [{"step": "Checked the schedule", "detail": str(exc)}]}
+            for pkg, _clip in chosen:
+                schedule.ensure_job(db, pkg, user_id=user_id)
+            schedule.refresh_project_status(db, project.id)
+            text = _describe_plan(list(times.values()), tzname)
+            return {"facts": {"scheduled": {"count": len(times), "text": text, "project_title": project.title,
+                                            "modes": sorted({schedule.mode(pkg) for pkg, _clip in chosen}),
+                                            "assumed_time": wanted.assumed_time}},
+                    "cards": [{"type": "link", "href": f"/videos/{project.id}", "label": "Open the scheduled clips"}],
+                    "actions": [{"step": "Scheduled publishing", "detail": f"{len(times)} package(s): {text}"}]}
         jobs = []
         for pkg, _clip in chosen:
-            job = queue.enqueue(db, "workflow.publish", {"package_id": str(pkg.id), "approved_by": state["user_id"]},
-                                project_id=project.id, user_id=uuid.UUID(state["user_id"]),
-                                dedupe_key=f"publish:{pkg.id}", status_label="Preparing upload")
-            jobs.append(job)
+            pkg.scheduled_at = None
+            pkg.status = "approved"
+            job = schedule.ensure_job(db, pkg, user_id=user_id)
+            if job is not None:
+                jobs.append(job)
         return {"facts": {"published_jobs": len(jobs), "project_title": project.title},
                 "cards": [{"type": "job", "job_id": str(j.id), "project_id": str(project.id)} for j in jobs[:4]],
                 "actions": [{"step": "Queued publishing", "detail": f"{len(jobs)} package(s) from {project.title}"}]}
@@ -357,6 +400,28 @@ def _act_publish(state: ChatState, *, approve_only: bool = False) -> ChatState:
 
 def _act_approve(state: ChatState) -> ChatState:
     return _act_publish(state, approve_only=True)
+
+
+def _wanted_time(state: ChatState) -> tuple[when.When | None, str, str | None]:
+    """A publish time named in the message, read in the owner's time zone: (time, zone name, problem)."""
+    with session_scope() as db:
+        tzname = state.get("timezone") or schedule.zone(db).key
+    found = when.parse(state["text"], now=utcnow(), zone=tzname)
+    if found is None:
+        return None, tzname, None
+    if found.at < utcnow() - timedelta(minutes=1):
+        return None, tzname, f"{when.describe(found.at, tzname)} has already passed"
+    return found, tzname, None
+
+
+def _describe_plan(times: list, tzname: str) -> str:
+    ordered = sorted(set(times))
+    if not ordered:
+        return ""
+    first = when.describe(ordered[0], tzname)
+    if len(ordered) == 1:
+        return first
+    return f"{first}, the last one {when.describe(ordered[-1], tzname)}"
 
 
 def _act_control(state: ChatState) -> ChatState:
@@ -370,7 +435,8 @@ def _act_control(state: ChatState) -> ChatState:
                 result = control.apply(db, switch, user_id=user, integration=f"publish:{platform}")
         else:
             result = control.apply(db, action, user_id=user)
-    return {"facts": {"control": action, "cancelled": result.get("cancelled_jobs", 0)},
+    return {"facts": {"control": action, "cancelled": result.get("cancelled_jobs", 0),
+                      "unscheduled": result.get("unscheduled_posts", 0)},
             "actions": [{"step": "Applied control", "detail": action.replace("_", " ")}]}
 
 
@@ -474,8 +540,18 @@ def _reply_process(state: ChatState) -> str:
         )
         if any(s["reused_source"] for s in started):
             lines.append("I've seen this source before, so I'll reuse its saved transcript and analysis where valid.")
-        if params.get("publish_requested"):
+        if facts.get("schedule"):
+            plan = facts["schedule"]
+            lines.append(f"You asked me to publish {plan['text']}"
+                         + (", then one every " + _every_text(plan["every_minutes"]) if plan.get("every_minutes") else "")
+                         + ". I'll prepare the packages and follow your publishing policy before anything is scheduled."
+                         + (" (You didn't give a time of day, so I used 09:00 — tell me if you want another time.)"
+                            if plan.get("assumed_time") else ""))
+        elif params.get("publish_requested"):
             lines.append("You asked me to publish — I'll prepare the packages and follow your publishing policy before anything goes live.")
+        if facts.get("time_problem"):
+            lines.append(f"⚠️ {facts['time_problem'][:1].upper()}{facts['time_problem'][1:]}, so I won't schedule it — tell me a "
+                         "future time, or publish when the clips are ready.")
         if facts.get("paused"):
             lines.append("Note: automation is currently paused, so this will wait until you resume it.")
         lines.append("I'll only promise what the source access allows: if just metadata or a transcript is available I'll say so clearly.")
@@ -503,8 +579,41 @@ def _reply_remember(state: ChatState) -> str:
     return text
 
 
+def _every_text(minutes: int) -> str:
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return "day" if days == 1 else f"{days} days"
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return "hour" if hours == 1 else f"{hours} hours"
+    return f"{minutes} minutes"
+
+
+def _schedule_notes(modes: list[str]) -> str:
+    notes = []
+    if "youtube" in modes:
+        notes.append("YouTube videos upload now as private and YouTube itself makes them public at that time — "
+                     "even if this computer is off by then.")
+    if "held" in modes:
+        notes.append("Instagram posts (and unlisted or private YouTube videos) are prepared shortly before and published "
+                     "by CLIPFORGE at that minute, so keep CLIPFORGE running then.")
+    return " ".join(notes)
+
+
 def _reply_publish(state: ChatState) -> str:
     facts = state["facts"]
+    if facts.get("time_problem"):
+        problem = facts["time_problem"]
+        return f"{problem[:1].upper()}{problem[1:]}. Tell me a time in the future (for example “tomorrow at 6pm”)."
+    if facts.get("schedule_error"):
+        return f"I couldn't schedule that: {facts['schedule_error']}"
+    if facts.get("scheduled"):
+        plan = facts["scheduled"]
+        text = (f"Scheduled {plan['count']} post(s): {plan['text']}. " + _schedule_notes(plan.get("modes", []))
+                + " I'll mark each one published only after the platform confirms it.")
+        if plan.get("assumed_time"):
+            text += " You didn't give a time of day, so I used 09:00 — tell me if you want another time."
+        return text
     if facts.get("policy") == "draft_only":
         return "Publishing is set to draft-only, so I won't upload anything. Change the publishing policy in Settings if you want me to publish."
     if facts.get("nothing_waiting"):
@@ -520,12 +629,16 @@ def _reply_publish(state: ChatState) -> str:
 def _reply_control(state: ChatState) -> str:
     facts = state["facts"]
     return {
-        "emergency_stop": f"Emergency stop is ON. I cancelled {facts['cancelled']} active job(s) and blocked external AI calls and publishing. Clear it in Settings when ready.",
+        "emergency_stop": f"Emergency stop is ON. I cancelled {facts['cancelled']} active job(s)"
+                          + (f" and {facts['unscheduled']} scheduled post(s) (videos already waiting on YouTube are kept private)"
+                             if facts.get("unscheduled") else "")
+                          + " and blocked external AI calls and publishing. Clear it in Settings when ready.",
         "pause": "All automation is paused. Running steps will stop at their next safe point.",
         "resume": "Automation resumed.",
         "hold_publishing": ("Publishing is on hold: nothing will be posted to YouTube or Instagram until you say "
                             "“resume publishing” (or switch it back on in Settings → Automation & safety). "
-                            "Processing and drafts continue as normal."),
+                            "Scheduled posts keep their times (videos waiting on YouTube are switched back to private "
+                            "meanwhile); processing and drafts continue as normal."),
         "resume_publishing": "Publishing is back on. Posts still follow your publishing policy and daily limits.",
     }.get(facts["control"], "Done.")
 
@@ -621,7 +734,8 @@ def get_graph():
     return _graph
 
 
-def handle_message(conversation_id: uuid.UUID, user, text: str, attachments: list[str] | None = None) -> dict[str, Any]:
+def handle_message(conversation_id: uuid.UUID, user, text: str, attachments: list[str] | None = None,
+                   timezone: str | None = None) -> dict[str, Any]:
     """Persist the user message, run the Brain, persist and return the reply."""
     text = (text or "").strip()[:8000]
     with session_scope() as db:
@@ -635,7 +749,7 @@ def handle_message(conversation_id: uuid.UUID, user, text: str, attachments: lis
         conversation.updated_at = utcnow()
     state = get_graph().invoke(
         {"conversation_id": str(conversation_id), "user_id": str(user.id), "user_role": user.role, "text": text,
-         "attachments": attachments or [], "actions": [], "cards": [], "facts": {}, "plan": []},
+         "timezone": timezone or "", "attachments": attachments or [], "actions": [], "cards": [], "facts": {}, "plan": []},
         thread_config(f"chat:{conversation_id}"),
     )
     meta = {"intent": state["parsed"]["intent"], "understood_by": state["parsed"].get("understood_by"),

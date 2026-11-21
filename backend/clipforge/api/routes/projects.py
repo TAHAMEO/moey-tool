@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ from ...db.models import (
     Source,
 )
 from ...jobs import queue
+from ...publishing import schedule
 from ...security.audit import audit
 from ...storage import get_storage
 from ..deps import Principal, client_ip, editor, viewer
@@ -48,6 +50,11 @@ class PackageEdit(BaseModel):
     caption: str | None = Field(None, max_length=2200)
     hashtags: list[str] | None = Field(None, max_length=30)
     privacy: str | None = Field(None, pattern="^(private|unlisted|public)$")
+
+
+class PublishRequest(BaseModel):
+    #: When the post should go live (ISO 8601 with a time zone). Leave out to publish now.
+    scheduled_at: datetime | None = None
 
 
 def _asset_url(asset_id) -> str | None:
@@ -108,13 +115,14 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
                 latest = db.execute(select(MetricSnapshot).where(MetricSnapshot.publication_id == pub.id)
                                     .order_by(MetricSnapshot.collected_at.desc())).scalars().first()
                 pubs.append({"id": str(pub.id), "status": pub.status, "url": pub.external_url, "external_id": pub.external_id,
-                             "published_at": pub.published_at, "last_error": pub.last_error,
+                             "published_at": pub.published_at, "scheduled_at": pub.scheduled_at, "last_error": pub.last_error,
                              "metrics": latest.metrics if latest else None,
                              "unavailable_metrics": latest.unavailable if latest else None})
             packages.append({"id": str(pkg.id), "platform": pkg.platform, "status": pkg.status, "title": pkg.title,
                              "description": pkg.description, "tags": pkg.tags, "caption": pkg.caption,
                              "hashtags": pkg.hashtags, "privacy": pkg.privacy, "metadata_method": pkg.metadata_method,
                              "thumbnail_url": _asset_url(pkg.thumbnail_asset_id or pkg.cover_asset_id),
+                             "scheduled_at": pkg.scheduled_at, "schedule_mode": schedule.mode(pkg),
                              "publications": pubs})
         clips_out.append({"id": str(clip.id), "rank": clip.rank, "start_s": clip.start_s, "end_s": clip.end_s,
                           "title": clip.title, "hook": clip.hook, "transcript": clip.transcript_text, "scores": clip.scores,
@@ -160,26 +168,98 @@ def edit_package(package_id: uuid.UUID, body: PackageEdit, request: Request, db:
     package = db.get(OutputPackage, package_id)
     if package is None:
         raise HTTPException(404, {"code": "not_found", "message": "Package not found."})
+    privacy_before = package.privacy
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(package, key, value)
     package.metadata_method = f"{package.metadata_method.split('+edited')[0]}+edited"
+    if package.status == "scheduled":
+        # A waiting video picks up the edits before it goes live; a privacy change can switch the mechanism.
+        if schedule.remote_publication(db, package.id) is not None:
+            schedule.kick(db)
+        elif package.privacy != privacy_before:
+            schedule.ensure_job(db, package, user_id=principal.id)
     audit(db, "package.edit", user_id=principal.id, target_type="package", target_id=package_id, ip=client_ip(request))
     return {"ok": True}
 
 
-@router.post("/packages/{package_id}/publish")
-def publish_package(package_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
-                    principal: Principal = Depends(editor)) -> dict:
+def _package(db: Session, package_id: uuid.UUID) -> OutputPackage:
     package = db.get(OutputPackage, package_id)
     if package is None:
         raise HTTPException(404, {"code": "not_found", "message": "Package not found."})
-    clip = db.get(Clip, package.clip_id)
-    job = queue.enqueue(db, "workflow.publish", {"package_id": str(package_id), "approved_by": str(principal.id)},
-                        dedupe_key=f"publish:{package_id}", project_id=clip.project_id, user_id=principal.id,
-                        status_label="Preparing upload")
+    return package
+
+
+def _schedule_error(exc: schedule.ScheduleError) -> HTTPException:
+    return HTTPException(409 if exc.code in ("daily_limit", "published", "not_scheduled") else 400,
+                         {"code": exc.code, "message": str(exc)})
+
+
+@router.post("/packages/{package_id}/publish")
+def publish_package(package_id: uuid.UUID, request: Request, body: PublishRequest | None = None,
+                    db: Session = Depends(get_db), principal: Principal = Depends(editor)) -> dict:
+    """Publish now, or schedule the exact time the post goes live (``scheduled_at``)."""
+    package = _package(db, package_id)
+    if package.status == "published":
+        raise HTTPException(409, {"code": "published", "message": "This clip is already published."})
+    if body is not None and body.scheduled_at is not None:
+        try:
+            result = schedule.schedule(db, package, body.scheduled_at, user_id=principal.id)
+        except schedule.ScheduleError as exc:
+            raise _schedule_error(exc) from exc
+        audit(db, "publish.schedule", user_id=principal.id, target_type="package", target_id=package_id,
+              details={"platform": package.platform, "scheduled_at": result["scheduled_at"], "mode": result["mode"]},
+              ip=client_ip(request))
+        return result
+    package.scheduled_at = None
+    package.status = "approved"
+    db.flush()
+    job = None
+    if schedule.remote_publication(db, package.id) is not None:
+        schedule.kick(db)  # the video already waits on YouTube: make it live now
+    else:
+        job = schedule.ensure_job(db, package, user_id=principal.id)
+    schedule.refresh_project_status(db, db.get(Clip, package.clip_id).project_id)
     audit(db, "publish.request", user_id=principal.id, target_type="package", target_id=package_id,
           details={"platform": package.platform}, ip=client_ip(request))
-    return {"job_id": str(job.id)}
+    return {"job_id": str(job.id) if job else None, "scheduled_at": None, "mode": "now"}
+
+
+@router.post("/packages/{package_id}/unschedule")
+def unschedule_package(package_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+                       principal: Principal = Depends(editor)) -> dict:
+    """Cancel a scheduled post. A video already uploaded to YouTube stays there, private."""
+    package = _package(db, package_id)
+    try:
+        result = schedule.unschedule(db, package)
+    except schedule.ScheduleError as exc:
+        raise _schedule_error(exc) from exc
+    audit(db, "publish.unschedule", user_id=principal.id, target_type="package", target_id=package_id,
+          details={"platform": package.platform}, ip=client_ip(request))
+    return result
+
+
+@router.get("/schedule")
+def upcoming_posts(db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> dict:
+    """Scheduled and missed posts, soonest first, with how each one will go out."""
+    rows = db.execute(select(OutputPackage, Clip, Project)
+                      .join(Clip, Clip.id == OutputPackage.clip_id).join(Project, Project.id == Clip.project_id)
+                      .where(OutputPackage.status.in_(("scheduled", "missed")))).all()
+    items = []
+    for package, clip, project in rows:
+        remote = schedule.remote_publication(db, package.id)
+        job = next(iter(schedule.active_jobs(db, package.id)), None) if remote is None else None
+        at = package.scheduled_at or (job.run_after if job else None)
+        items.append({"package_id": str(package.id), "platform": package.platform, "status": package.status,
+                      "title": package.title or clip.title or "Untitled", "clip_rank": clip.rank,
+                      "project_id": str(project.id), "project_title": project.title,
+                      "scheduled_at": at, "owner_time": package.scheduled_at is not None,
+                      "mode": schedule.mode(package), "privacy": package.privacy,
+                      "uploaded": remote is not None, "remote_status": remote.status if remote else None,
+                      "on_hold": not schedule.publishing_allowed(db, package.platform),
+                      "last_error": remote.last_error if remote else None,
+                      "thumbnail_url": _asset_url(package.thumbnail_asset_id or package.cover_asset_id)})
+    items.sort(key=lambda i: (i["status"] != "missed", i["scheduled_at"].timestamp() if i["scheduled_at"] else float("inf")))
+    return {"timezone": schedule.zone(db).key, "items": items}
 
 
 @router.delete("/projects/{project_id}")

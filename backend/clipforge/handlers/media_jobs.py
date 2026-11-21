@@ -1,9 +1,10 @@
 """Specialist media jobs.
 
 ``source.acquire`` runs on the ``default`` queue (it may need OAuth tokens).
-Everything that opens untrusted media runs on the ``media`` queue, whose
-workers have no master key. Every job reuses earlier results for the same
-source (content-addressed) instead of recomputing them.
+Everything that opens untrusted media — including ``source.download``, which
+fetches public videos with yt-dlp — runs on the ``media`` queue, whose workers
+have no master key. Every job reuses earlier results for the same source
+(content-addressed) instead of recomputing them.
 """
 
 from __future__ import annotations
@@ -72,6 +73,53 @@ def acquire_job(ctx: JobContext) -> dict:
                 raise RetryableError(str(exc)) from exc
             raise PermanentError(str(exc), code="acquire", details={"state": exc.state}) from exc
     return result
+
+
+# ------------------------------------------------------------------ download
+@handler("source.download", queue="media")
+def download_job(ctx: JobContext) -> dict:
+    """A public YouTube/Instagram video, fetched with yt-dlp (see ingestion/public_download.py)."""
+    from ..ingestion import public_download
+    from ..storage import sha256_file
+
+    source_id = uuid.UUID(ctx.payload["source_id"])
+    url = ctx.payload["url"]
+    with session_scope() as db:
+        source = db.get(Source, source_id)
+        if source.media_asset_id and source.media_status == "available":
+            ctx.event("Reusing the video downloaded earlier", stage="acquire")
+            return {"media_asset_id": str(source.media_asset_id), "method": "public_download", "reused": True}
+    settings = get_settings()
+    work = settings.work_dir / "download" / str(source_id)
+    shutil.rmtree(work, ignore_errors=True)
+    ctx.progress(0.02, label="Downloading video", stage="acquire")
+    try:
+        result = public_download.download(
+            url, work, max_bytes=settings.max_download_mb * 1024 * 1024,
+            max_seconds=settings.max_source_duration_hours * 3600, cache_dir=settings.data_dir / "cache" / "yt-dlp",
+            on_progress=lambda f, _label: ctx.progress(0.02 + 0.93 * f, label="Downloading video"),
+            cancelled=ctx.cancelled)
+    except public_download.DownloadError as exc:
+        shutil.rmtree(work, ignore_errors=True)
+        if exc.retryable:
+            raise RetryableError(str(exc)) from exc
+        raise PermanentError(str(exc), code="download", label="Source unavailable",
+                             details={"state": exc.state, "detail": exc.detail}) from exc
+    ctx.progress(0.96, label="Checking the download", stage="acquire")
+    sha = sha256_file(result.path)
+    with session_scope() as db:
+        source = db.get(Source, source_id)
+        asset = acq._store_source_media(
+            db, source, result.path, sha=sha, mime="video/mp4" if result.path.suffix == ".mp4" else "application/octet-stream",
+            origin={"method": "public_download", "tool": "yt-dlp", "url": url, "extractor": result.info.get("extractor_key"),
+                    "license": result.info.get("license")})
+        source.source_metadata = {**(source.source_metadata or {}), "download": result.info}
+        if result.info.get("title") and not (source.source_metadata or {}).get("title"):
+            source.source_metadata = {**source.source_metadata, "title": result.info["title"]}
+        asset_id = asset.id
+    shutil.rmtree(work, ignore_errors=True)
+    return {"media_asset_id": str(asset_id), "method": "public_download", "license": result.info.get("license"),
+            "title": result.info.get("title"), "duration": result.info.get("duration")}
 
 
 # ------------------------------------------------------------------- prepare
