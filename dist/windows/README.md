@@ -1,13 +1,23 @@
 # CLIPFORGE for Windows — installer
 
-`ClipForge-Setup-0.2.2.exe` installs CLIPFORGE on Windows 10 (version 2004 or later) and
+`ClipForge-Setup-0.2.3.exe` installs CLIPFORGE on Windows 10 (version 2004 or later) and
 Windows 11. Download it, double-click it and follow the steps — see [docs/WINDOWS.md](../../docs/WINDOWS.md).
 
 - Built from the commit that adds it with `installer/windows/build.sh` (NSIS 3.09).
-- SHA-256: see `ClipForge-Setup-0.2.2.exe.sha256`.
+- SHA-256: see `ClipForge-Setup-0.2.3.exe.sha256`.
 - Not code-signed: Windows SmartScreen may show "Windows protected your PC" — choose
   *More info → Run anyway*. Signing it needs a code-signing certificate from the publisher.
 - Rebuild after changing CLIPFORGE: `installer/windows/build.sh` (on Linux with `nsis` installed).
+
+## Tested
+
+The same `setup.exe` (built from the same source) ran silently through the whole installation on
+real Windows Server 2022 and 2025 machines in GitHub Actions, after which CLIPFORGE answered on
+http://localhost:3000 — see docs/TEST_RESULTS.md.
+
+## Changes in 0.2.3
+
+- The 1.8 GB speech-model download shows its progress (percent, speed, minutes left).
 
 ## Changes in 0.2.2
 
