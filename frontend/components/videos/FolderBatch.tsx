@@ -22,7 +22,7 @@ type Source = "device" | "watch";
 
 function defaultRecipe(settings?: AllSettings | null): BatchRecipe {
   return {
-    instruction: "", count: settings?.clips.default_count ?? 3, platforms: settings?.publishing.platforms ?? ["youtube", "instagram"],
+    instruction: "", count: null, platforms: settings?.publishing.platforms ?? ["youtube", "instagram"],
     publish: "approve", privacy: settings?.publishing.default_privacy ?? "private",
     schedule: { mode: "slots", times: ["18:00"], start_date: null },
   };
@@ -182,8 +182,9 @@ export function FolderBatchDialog({ open, onClose, onStarted }: { open: boolean;
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <Label>Clips per video</Label>
-                <Input type="number" min={1} max={30} value={r.count ?? ""} onChange={(e) => set({ count: e.target.value ? Math.max(1, Math.min(30, Number(e.target.value))) : null })} />
+                <Label hint="leave empty to use the instruction or your default">Clips per video</Label>
+                <Input type="number" min={1} max={30} value={r.count ?? ""} placeholder={`${settings?.clips.default_count ?? 5} (default)`}
+                  onChange={(e) => set({ count: e.target.value ? Math.max(1, Math.min(30, Number(e.target.value))) : null })} />
               </div>
               <div>
                 <Label>Platforms</Label>

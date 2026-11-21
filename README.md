@@ -25,7 +25,15 @@ Instagram accounts, then learns from the results.
 - **One chat, one Brain.** Plain-language requests, status, costs, memory and controls all go
   through Brain Chat. Everything the Brain does is shown as cards you can open, retry or approve.
 - **Links in, clips out.** YouTube long-form videos, YouTube livestreams, Instagram Reels and
-  Instagram video posts. Uploading files is an optional fallback, not the normal workflow.
+  Instagram video posts. Public videos are downloaded with yt-dlp when your own copy isn't
+  available (owner switch; never behind a login, paywall or DRM). Uploading files is an optional
+  fallback.
+- **Whole folders.** Pick a folder in the browser, or let CLIPFORGE watch one (on Windows
+  `Videos\ClipForge`): every video in it is turned into clips with one recipe and, if you want,
+  posted on a timetable such as one clip a day at 18:00.
+- **Exact posting times.** Schedule any post for a date and time. Public YouTube videos are
+  handed to YouTube's own scheduler (they go out even if your PC is off); Instagram Reels are
+  prepared early and published at the minute.
 - **Honest source access.** Every link is classified into one of 12 access states
   (full media, transcript only, metadata only, live feed, login/permission required, private,
   unavailable, …). CLIPFORGE never bypasses DRM, logins, paywalls or platform protections, and
@@ -40,12 +48,20 @@ Instagram accounts, then learns from the results.
 - **Real publishing.** YouTube Data API (resumable upload, caption track, thumbnail, playlist,
   processing verification, quota tracking) and the Instagram API with Instagram Login (Reels,
   container polling, publishing limits). A video is marked *published* only after the platform
-  confirms it; duplicate uploads are blocked.
+  confirms it; duplicate uploads are blocked. Accounts connect with one click (sign-in pop-up);
+  see [ONE_CLICK_CONNECT.md](docs/ONE_CLICK_CONNECT.md).
 - **Learning without fake numbers.** Only metrics the platforms return are stored; patterns are
   labelled as correlations until a randomised experiment confirms them; strategies are versioned
   and can be rolled back.
 - **Safety controls.** Approval-first publishing, pause, emergency stop, per-integration switches,
   spending limits, roles, audit log, encrypted secrets, SSRF protection, untrusted-content fencing.
+
+## Windows 10 and 11
+
+Run **ClipForge-Setup-&lt;version&gt;.exe**: it turns on WSL 2 if needed, sets up everything
+CLIPFORGE needs (no Docker Desktop required), shows its progress, continues by itself after a
+restart, and adds Start menu shortcuts. See [docs/WINDOWS.md](docs/WINDOWS.md). The installer is
+built with `installer/windows/build.sh`.
 
 ## Quick start (Docker)
 
@@ -64,13 +80,13 @@ git clone <this repository> clipforge && cd clipforge
 Open http://localhost:3000, create the owner account, then:
 
 1. **AI Connections** — add at least one AI service (or run the optional local model server, below).
-2. **Settings → Accounts** — connect YouTube and/or Instagram (needs the one-time app setup in
-   [docs/API_SETUP.md](docs/API_SETUP.md)).
+2. **Settings → Accounts** — connect YouTube and/or Instagram with one click (the first time,
+   a guided set-up registers your Google/Instagram app unless your copy has it built in —
+   [docs/ONE_CLICK_CONNECT.md](docs/ONE_CLICK_CONNECT.md)).
 3. **Brain Chat** — paste a link and say what you want.
 
 For a public server with HTTPS: `./scripts/install.sh --domain clips.example.com`
-(see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). On Windows, use Docker Desktop with WSL 2 —
-step by step in [docs/INSTALL.md](docs/INSTALL.md#windows).
+(see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
 Optional local language models (no API costs): `docker compose --profile local-ai up -d`,
 then add *Ollama (local)* in AI Connections with `http://ollama:11434/v1`.
@@ -81,6 +97,8 @@ then add *Ollama (local)* in AI Connections with `http://ollama:11434/v1`.
 |---|---|
 | [User guide](docs/USER_GUIDE.md) | Using Brain Chat, My Videos, AI Connections, Learning Center, Settings |
 | [Installation](docs/INSTALL.md) | Docker and bare-metal installation, models, upgrades |
+| [Windows](docs/WINDOWS.md) | The Windows 10/11 installer: what it does, everyday use, troubleshooting |
+| [One-click connect](docs/ONE_CLICK_CONNECT.md) | Registering the Google/Instagram apps once, or building them into your copy |
 | [Deployment](docs/DEPLOYMENT.md) | Cloud servers, HTTPS, backups and restore, monitoring, scaling |
 | [API setup](docs/API_SETUP.md) | Google/YouTube, Meta/Instagram and AI provider credentials |
 | [Source access](docs/SOURCE_ACCESS.md) | The 12 access states and what CLIPFORGE will and won't do |
@@ -97,6 +115,8 @@ backend/            Python 3.12 API, Brain, workers, media pipeline (FastAPI, La
   clipforge/        application package          tests/  pytest suite (unit, contract, end-to-end)
   migrations/       Alembic database migrations
 frontend/           Next.js 16 web app (React 19, Tailwind 4)
+installer/windows/  Windows setup.exe (NSIS) and its PowerShell / WSL scripts
+config/             optional built-in Google/Instagram apps (oauth-apps.json)
 workers/whisperx/   optional WhisperX engine, run in its own virtual environment
 deploy/             Dockerfiles, Caddy, PostgreSQL init
 scripts/            install, backup and restore

@@ -12,6 +12,11 @@ import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { JobSummary, ProjectSummary, ScheduleItem } from "@/lib/types";
 
+const JOB_NAMES: Record<string, string> = {
+  "workflow.video": "Video production", "workflow.publish": "Publishing", "batch.ingest_file": "Taking in a video from a watched folder",
+  "media.render": "Re-rendering a clip", "live.process": "Live stream",
+};
+
 type Usage = { today_usd: number; month_usd: number; budgets: { daily: number; monthly: number }; cache_hits_month: number };
 type Connections = { accounts: { platform: string; status: string }[]; youtube_quota_remaining: number };
 type Diagnostics = Record<string, { ok?: boolean; [k: string]: unknown }>;
@@ -157,7 +162,7 @@ export default function DashboardPage() {
                 <li key={job.id} className="py-3">
                   <div className="flex items-center justify-between gap-3">
                     <Link href={job.project_id ? `/videos/${job.project_id}` : "#"} className="truncate text-sm font-medium hover:text-primary">
-                      {job.type === "workflow.video" ? "Video production" : job.type.replace(/\./g, " ")}
+                      {JOB_NAMES[job.type] ?? "Background task"}
                     </Link>
                     <StatusBadge label={job.label} status={job.status} />
                   </div>

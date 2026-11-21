@@ -378,7 +378,6 @@ def test_approval_can_schedule_clips_one_per_day(platforms, tmp_path, owner_clie
     with session_scope() as db:
         ranks = []
         for rank, pid in enumerate(packages, 1):
-            package = db.get(OutputPackage, pid)
             ranks.append({"package_id": str(pid), "platform": "youtube", "rank": rank})
         project = db.execute(select(Project)).scalars().first()
         job = Job(type="workflow.video", queue="default", payload={}, status="waiting", project_id=project.id,

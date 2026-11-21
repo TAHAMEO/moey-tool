@@ -3,6 +3,8 @@
 * text=auto eol=lf
 
 *.png binary
+*.ico binary
+*.exe binary
 *.jpg binary
 *.ttf binary
 *.mp4 binary

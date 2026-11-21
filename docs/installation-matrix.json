@@ -357,16 +357,72 @@
     },
     {
       "catalog_item": null,
-      "name": "yt-dlp and other third-party downloaders",
-      "source": "-",
-      "version": "-",
-      "license": "-",
-      "decision": "deliberately excluded",
-      "install_method": null,
-      "role": "-",
+      "name": "yt-dlp",
+      "source": "PyPI",
+      "version": "2026.10.26",
+      "license": "Unlicense",
+      "decision": "install & integrate (owner-enabled public downloads)",
+      "install_method": "uv (backend/uv.lock), without the [default] extra",
+      "role": "Download videos anyone can watch from YouTube/Instagram links; media worker only; no cookies/logins/geo-bypass/impersonation",
       "verification": {
-        "status": "not-installed",
-        "evidence": "not an authorised access method"
+        "status": "verified-locally",
+        "evidence": "tests/test_public_download.py: download, size limit, extractor allow-list, media-worker job, honest error states, workflow routing against a local server; real YouTube/Instagram unreachable (BLOCKED)"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "yt-dlp-ejs",
+      "source": "PyPI",
+      "version": "0.8.0",
+      "license": "Unlicense AND MIT AND ISC",
+      "decision": "install (dependency of the YouTube path)",
+      "install_method": "uv",
+      "role": "YouTube player challenge solver scripts, local (no remote components)",
+      "verification": {
+        "status": "installed",
+        "evidence": "public_download.available() reports the solver and runtime present"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "Deno",
+      "source": "PyPI deno wheel",
+      "version": "2.9.8",
+      "license": "MIT",
+      "decision": "install (runtime for yt-dlp-ejs)",
+      "install_method": "uv",
+      "role": "Sandboxed JavaScript runtime",
+      "verification": {
+        "status": "installed",
+        "evidence": "binary found by deno.find_deno_bin(); passed to yt-dlp js_runtimes"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "tzdata",
+      "source": "PyPI",
+      "version": "2026.6",
+      "license": "Apache-2.0",
+      "decision": "install",
+      "install_method": "uv",
+      "role": "Time zones for scheduling",
+      "verification": {
+        "status": "verified",
+        "evidence": "tests/test_scheduling.py (time zones Europe/London, Asia/Karachi, America/Los_Angeles)"
+      }
+    },
+    {
+      "catalog_item": null,
+      "name": "NSIS",
+      "source": "Ubuntu apt (nsis 3.09)",
+      "version": "3.09",
+      "license": "zlib/libpng",
+      "decision": "build tool for the Windows installer",
+      "install_method": "apt (build machine only)",
+      "role": "Builds ClipForge-Setup.exe",
+      "verification": {
+        "status": "verified",
+        "evidence": "installer/windows/build.sh builds the setup.exe without warnings"
       }
     }
   ]

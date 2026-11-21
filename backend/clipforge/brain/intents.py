@@ -27,6 +27,26 @@ DURATION_MIN_RE = re.compile(r"(?:at least|over|more than|min(?:imum)?)\s*(\d{1,
 FOCUS_RE = re.compile(r"\b(?:about|on|focus(?:ing)? on|related to|where (?:he|she|they) talks? about)\s+(?:the\s+)?([\w\s'-]{3,60}?)(?:[.,;!?]|$|\s+(?:from|in|for|and|with)\b)", re.IGNORECASE)
 
 
+# "all videos in the Podcast folder", "the folder called Gaming", "my 'Interviews' folder", "watch the Vlog folder"
+_FOLDER_NAMED = re.compile(r"\bfolder\s+(?:called|named)\s+[\"'“‘]?(?P<name>[\w][\w .&-]{0,58}?)[\"'”’]?(?=$|[\s,.;:!?])",
+                           re.IGNORECASE)
+_FOLDER_QUOTED = re.compile(r"\bfolder\s+[\"'“‘](?P<name>[^\"'”’]{1,60})[\"'”’]", re.IGNORECASE)
+_FOLDER_BEFORE = re.compile(
+    r"\b(?:in|from|of|watch|process|use)\s+(?:all\s+(?:the\s+)?(?:videos?\s+)?(?:in\s+)?)?(?:the\s+|my\s+)?"
+    r"[\"'“‘]?(?P<name>[\w][\w .&-]{0,58}?)[\"'”’]?\s+folder\b", re.IGNORECASE)
+_NOT_A_NAME = {"the", "my", "a", "this", "that", "your", "inbox", "watched", "same", "new", "whole", "every", "each"}
+
+
+def folder_name(text: str) -> str | None:
+    """The folder a chat message names, if any ("process all videos in the Podcast folder" → Podcast)."""
+    for pattern in (_FOLDER_NAMED, _FOLDER_QUOTED, _FOLDER_BEFORE):
+        for match in pattern.finditer(text or ""):
+            name = match.group("name").strip().strip(".")
+            if name and name.lower() not in _NOT_A_NAME:
+                return name
+    return None
+
+
 @dataclass
 class ParsedRequest:
     intent: str
@@ -44,6 +64,7 @@ class ParsedRequest:
     burn_captions: bool | None = None
     languages: list[str] = field(default_factory=list)
     control_action: str | None = None
+    folder: str | None = None
     clip_refs: list[int] = field(default_factory=list)
     confidence: float = 0.9
 
@@ -147,6 +168,12 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
             break
     burn = False if re.search(r"\b(no|without)\s+(burned[- ]in\s+)?(captions|subtitles)\b", lower) else None
     languages = re.findall(r"\b(english|spanish|french|german|portuguese|arabic|hindi|urdu|italian|japanese)\s+(?:subtitles|captions)\b", lower)
+
+    folder = folder_name(URL_RE.sub(" ", text))
+    if folder and not urls and not has_attachments and (clipish or publish or re.search(r"\b(watch|process|all videos)\b", lower)):
+        return ParsedRequest("process_folder", folder=folder, count=_count(text), platforms=_platforms(lower), aspects=_aspects(lower),
+                             min_seconds=low, max_seconds=high, publish=publish, focus=focus, caption_style=caption_style,
+                             burn_captions=burn, languages=languages, **base)
 
     if urls or has_attachments:
         return ParsedRequest(

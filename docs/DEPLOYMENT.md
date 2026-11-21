@@ -99,6 +99,20 @@ checkpoint.
 - Jobs are claimed with `SELECT … FOR UPDATE SKIP LOCKED`, so any number of workers can share a
   queue; a crashed worker's job is re-queued when its lease expires and resumes from its checkpoint.
 
+## Watched folders and built-in sign-in apps
+
+- **Inbox:** `CLIPFORGE_INBOX_HOST` (default `./inbox` next to `docker-compose.yml`) is mounted at
+  `/inbox` in the API and both workers. Point it at a share your team copies videos into (an SMB/NFS
+  mount works — folders are polled every minute, so no file-system events are needed). For the
+  *move to Processed* option, the container user (uid 10001) needs write access to it.
+- **One-click Connect for every user:** put `config/oauth-apps.json` on the server (see
+  [ONE_CLICK_CONNECT.md](ONE_CLICK_CONNECT.md)) and use a *Web application* Google client with
+  `https://<your domain>/api/connections/google/callback` registered; on HTTPS, Instagram needs no
+  relay page.
+- **Public downloads** need outbound access to `www.youtube.com`, `*.googlevideo.com`,
+  `www.instagram.com` and `*.cdninstagram.com`. Some cloud providers' IP ranges are asked by YouTube
+  to sign in ("confirm you're not a bot"); CLIPFORGE reports that rather than working around it.
+
 ## Live ingest
 
 The main worker listens for SRT on UDP 9000-9003 (four concurrent sessions). Set

@@ -79,6 +79,12 @@ channels (see §4).
 | Caddy | 2 (official image) | Apache-2.0 | Front door with automatic HTTPS; routes `/api` straight to the API and sets a trustworthy client address |
 | Valkey | 8 (official image) | BSD-3-Clause | Redis-protocol server for wake-ups/throttling in the Docker deployment. Chosen over Redis because Redis 7.4+ (what `redis:7-alpine` resolves to) is under the source-available RSALv2/SSPLv1 licences |
 | Ollama | 0.40.16 (official image, optional `local-ai` profile) | MIT | Local language models. Verified with Llama 3.2 1B (Q4_0) and Qwen 2.5 3B (Q4_K_M) GGUF files from Docker Hub's `ai/` namespace (OCI manifests and layer digests verified). Building llama.cpp from GitHub sources was not permitted in this environment, so Ollama was used instead |
+| yt-dlp | 2026.10.26 (PyPI, **without** the `[default]` extra) | Unlicense | Public video downloads, added at the owner's request (Settings → Sources). Runs in the media worker; only the YouTube and Instagram extractors are loaded; no cookies, logins, geo-bypass, impersonation or remote components. The `[default]` extra is not installed: it brings GPL-licensed `mutagen` (not needed) and impersonation helpers (not wanted) |
+| yt-dlp-ejs | 0.8.0 | Unlicense AND MIT AND ISC | YouTube's player challenge solver scripts, used locally so yt-dlp never fetches code from the internet (`remote_components` stays empty) |
+| Deno | 2.9.8 (PyPI `deno` wheel) | MIT | Sandboxed JavaScript runtime yt-dlp uses to run those scripts (no file, network or environment permissions) |
+| tzdata | 2026.6 | Apache-2.0 | Time-zone database for schedules on systems without one (Docker images, Windows) |
+| NSIS | 3.09 (build tool only) | zlib/libpng | Builds the Windows `setup.exe`; its runtime stub is under the zlib licence |
+| Ubuntu 24.04 WSL image, Docker Engine | 20240423 image (SHA-256 pinned); Engine from Docker's apt repository | various / Apache-2.0 | Downloaded by the Windows installer on the user's PC into CLIPFORGE's own WSL 2 environment (not redistributed) |
 
 **Supply-chain checks:** `pip-audit` (PyPI advisory database) found no known vulnerabilities in the
 123 PyPI runtime packages of `backend/uv.lock`; `npm audit` found none in the frontend. The
@@ -87,10 +93,17 @@ git-pinned Instagram SDK is not covered by any advisory database (its source was
 `github.com/pydantic/httpx2`), required by `openai`, `huggingface-hub` and `langsmith` — checked
 because the name resembles `httpx` and the release was two days old.
 
-**Deliberately excluded: `yt-dlp` and any third-party downloader.** YouTube's Terms of Service
-prohibit downloading content except through features the service provides or with permission,
-and Instagram's terms prohibit automated collection. CLIPFORGE therefore never downloads arbitrary
-public videos; it uses the authorized access methods listed in [`SOURCE_ACCESS.md`](SOURCE_ACCESS.md).
+**`yt-dlp`: previously excluded, now integrated at the owner's explicit request.** The first
+version deliberately left out third-party downloaders. The owner then asked for YouTube and
+Instagram links to download, so public downloads were added as an owner-controlled method (on by
+default, *Settings → Sources*), with hard limits that keep the original rules: official and
+owner methods are tried first; nothing behind a login, membership, age gate, paywall or DRM is
+downloaded; no cookies or credentials are ever given to yt-dlp; no location faking or
+impersonation; a sign-in wall is reported as `LOGIN_REQUIRED`; and clips from another creator's
+video are never published automatically. YouTube's Terms of Service restrict downloading without
+permission and Instagram's terms restrict automated collection, so every project made this way
+reminds the owner to use only videos they own or may reuse. Details:
+[`SOURCE_ACCESS.md`](SOURCE_ACCESS.md#public-downloads-yt-dlp).
 
 ## 5. Installation matrix
 

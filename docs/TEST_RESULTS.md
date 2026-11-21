@@ -16,14 +16,18 @@ where marked CONTRACT, and they reproduce documented request/response shapes and
 
 ## Automated test suite
 
-**122 tests, all passing.** Final full run (`pytest -m "slow or not slow"`): 121 passed, 0 failed in 11 min 00 s
-on 4 vCPU; one diagnostics test added afterwards passed with the fast suite (116 passed). 6 of them are marked `slow` (real media, real live stream, full speech-model install); the rest run in about 3 minutes.
+**198 tests, all passing.** Full run on 2026-11-21 (`pytest -m "slow or not slow"`): 197 passed, 0 failed
+in 12 min 59 s on 4 vCPU; the chat folder test added afterwards passed with its file and the Brain
+Chat and scheduling suites (65 passed). 6 tests are marked `slow` (real media, real live stream,
+full speech-model install); the rest run in about 4 minutes.
 
 | File | Tests | What it covers |
 |---|---|---|
 | `test_analytics_learning.py` | 6 | analytics collection (real metrics only), comparison statistics, learning loop with experiments and versioned strategies |
 | `test_auth_api.py` | 8 | first-run setup, sessions, CSRF, lockout, roles, cookie flags, security headers, audit log, forged forwarded headers |
+| `test_batches.py` | 11 | folder batches: recipe, path safety (incl. symlinks), watched folders (stable files, duplicates, moving to Processed, changed files), browser uploads, pause/resume/cancel, posting slots, auto-publish vs draft-only, chat command |
 | `test_brain_chat.py` | 19 | Brain Chat intents and actions, memory survives restart, knowledge reuse/consensus/disputes, controls, uploads |
+| `test_connect.py` | 7 | one-click connect (CONTRACT): app sources and precedence, encrypted storage, credential check, Desktop-app loopback sign-in, Instagram relay, strict loopback origins, refresh with the issuing app |
 | `test_jobs_runtime.py` | 7 | durable jobs: LangGraph checkpoints, child jobs, approvals, retries, stale leases, dedupe, pause, cancel |
 | `test_library.py` | 2 | media library rights gate, type checks, master files |
 | `test_live.py` | 2 | **real** SRT live stream: authentication, disconnect/reconnect, live transcription, replay, retention |
@@ -33,25 +37,25 @@ on 4 vCPU; one diagnostics test added afterwards passed with the fast suite (116
 | `test_model_hub.py` | 13 | providers, discovery, routing, fallback, budgets, caching, structured output, adapters (CONTRACT for cloud APIs) |
 | `test_models.py` | 3 | verified speech-model installation, tampered archive and zip-slip refusal |
 | `test_pipeline_e2e.py` | 3 | **real** media pipeline: link → download → transcription → analysis → selection → face-tracked render → captions → packages; reuse of expensive work; resumable transcription |
+| `test_public_download.py` | 19 | public downloads with yt-dlp against a local server: download, size limit, extractor allow-list, no sign-in/geo-bypass options, honest error states, media-worker job, sign-in wall → `LOGIN_REQUIRED` project |
 | `test_publishing.py` | 7 | YouTube/Instagram publishing (CONTRACT): resumable upload, interruption, duplicates, quota, captions, policies |
 | `test_render_still.py` | 3 | caption-free covers, cover text fitting, brand caption colour |
-| `test_resolver.py` | 12 | source access resolver: all access states, ownership, live states, CDN guard, expired links (CONTRACT for platforms) |
+| `test_resolver.py` | 16 | source access resolver: all access states, ownership, live states, CDN guard, expired links, public downloads and their limits (CONTRACT for platforms) |
+| `test_scheduling.py` | 35 | scheduled publishing: time phrases, YouTube's scheduler hand-off and confirmation, moving/editing/holding/cancelling waiting videos, publishing at the exact minute, missed posts, daily limits, emergency stop, quota reset, approvals, chat (CONTRACT for platform calls) |
 | `test_retention.py` | 2 | storage clean-up of old clips without touching uploads in progress; live buffer default |
 | `test_security.py` | 23 | encryption, key rotation, media worker without key, passwords, SSRF, untrusted-text fencing |
 | `test_settings_api.py` | 5 | settings validation, controls, integration switches, worker diagnostics |
 
-The ten slowest tests:
+The slowest tests (2026-11-21 run):
 
-- 141 s — `test_duplicate_link_reuses_expensive_work`
-- 131 s — `test_live_stream_end_to_end`
-- 109 s — `test_link_to_rendered_clips`
+- 168 s — `test_live_stream_end_to_end`
+- 143 s — `test_duplicate_link_reuses_expensive_work`
+- 113 s — `test_link_to_rendered_clips`
 - 31 s — `test_transcription_resumes_failed_chunk`
-- 18 s — `test_interrupted_upload_resumes_without_duplicate`
+- 19 s — `test_interrupted_upload_resumes_without_duplicate`
 - 12 s — `test_workflow_children_approval_and_completion`
 - 12 s — `test_resumes_do_not_consume_retry_budget`
-- 8 s — `test_render_writes_caption_free_still`
-- 8 s — `test_resume_from_checkpoint_after_failure`
-- 8 s — `test_pause_and_unpause_queued_job`
+- 9 s — `test_render_writes_caption_free_still`
 
 Run it yourself (PostgreSQL with pgvector and Redis/Valkey on localhost):
 
@@ -110,6 +114,27 @@ These were run against the running application and are reproducible with the com
    known vulnerabilities. `npm audit` (production and dev): none. The optional WhisperX
    environment: 14 advisories in torch 2.8.0 / transformers 4.57.6, which WhisperX 3.8.6 pins (no
    fixed WhisperX release yet; it runs as a separate optional process, see SECURITY.md).
+
+## Improvements of 2026-11-21
+
+The five requested improvements, and how each was verified (same status meanings as above):
+
+| Request | What was built | Status | Evidence |
+|---|---|---|---|
+| 1. Exact posting date and time | Schedule on any package, while approving (one per hour/day/week), from chat ("tomorrow at 6pm", in the browser's time zone) and per batch (daily time slots). Public YouTube videos use YouTube's own scheduler (`publishAt`), so they go out with the PC off; Instagram and unlisted/private YouTube posts are prepared 10 minutes early and published at the minute. Move, cancel, publish now, edit while waiting, hold, emergency stop, late-post limit, daily limits for the chosen day, Upcoming posts on the Dashboard | **PASS** (scheduling logic, queue, UI, chat) / **CONTRACT** (YouTube and Instagram calls) | `test_scheduling.py` (35 tests: time phrases, YouTube scheduler hand-off and confirmation, moving/editing/holding/cancelling a waiting video, unlisted video switched at the minute, Instagram published at the exact second, missed posts, holds, daily limits, emergency stop, quota reset, approvals, chat); browser walk-through below |
+| 2. Download from YouTube and Instagram | yt-dlp downloads of videos anyone can watch, in the media worker, with no cookies/logins/geo-bypass/impersonation; private, members-only, age-restricted, paid, DRM and sign-in-walled videos get the honest access state; owner switch in Settings → Sources; clips of other creators' videos never auto-publish | **PASS** (download pipeline against a local server, honest states, routing) / **BLOCKED** (real YouTube and Instagram: unreachable from this environment) | `test_public_download.py` (19 tests incl. the media-worker job and a sign-in wall turning the project into `LOGIN_REQUIRED`), `test_resolver.py` (4 new); in the running stack `/api/diagnostics` reports yt-dlp 2026.10.26 with Deno and the challenge solver ready |
+| 3. One-click account connection | Popup sign-in that closes itself; the Google/Instagram app found automatically (saved in-app encrypted, built in via `config/oauth-apps.json`, or `.env`); guided one-time set-up with credential check; Google Desktop-app loopback sign-in (no redirect registration); Instagram HTTPS relay page that only forwards to this computer | **CONTRACT** (OAuth exchanges) / **PASS** (relay page in Chromium; credential check against the **real** Google token endpoint) / **BLOCKED** (a real sign-in: needs a registered app and a person at the consent screen) | `test_connect.py` (7), `frontend/e2e/relay.mjs` (11 checks in Chromium, including refusal of foreign destinations); `google.check_app` with a made-up client against `oauth2.googleapis.com` returned "doesn't recognise this client" |
+| 4. Windows 10/11 installer | `ClipForge-Setup-<version>.exe` (NSIS): checks the PC, turns on WSL 2 (restart and automatic resume), downloads Ubuntu 24.04 for WSL (SHA-256 pinned), installs Docker Engine in CLIPFORGE's own WSL environment, builds CLIPFORGE, downloads models, Start-menu/desktop shortcuts, start-at-sign-in, launcher with a progress window, uninstaller that can keep data | **PASS** (build; scripts; in-Linux set-up) / **BLOCKED** (running on a real Windows PC) | `installer/windows/build.sh` builds the exe without warnings; both PowerShell scripts parse with no PowerShell-7-only syntax; `installer/windows/tests/run-tests.ps1` (12 checks with a stand-in `wsl.exe` and the real Ubuntu image: checksum enforcement, import arguments, re-run safety — it caught a bug that would have failed every step on Windows); `provision.sh` run inside the exact Ubuntu WSL image: Docker Engine 29.10 + Compose installed, `.env` secrets created (mode 600) and kept on update, inbox path with spaces mapped |
+| 5. Folder batches | Pick a folder in the browser (each video uploaded and started as it arrives), watch an inbox folder (on Windows `Videos\ClipForge`), or say it in Brain Chat; one recipe per batch; files taken once they stop changing; duplicates skipped; owner files untouched unless moved to `Processed`; posting slots shared across the batch; pause/resume/cancel | **PASS** | `test_batches.py` (11 tests: path safety incl. symlinks, stability, duplicates, moving, browser uploads, posting slots, auto-publish vs draft-only, the chat command "process all videos in the Podcast folder…"); browser walk-through: a real talk video copied into the watched `Podcast` folder was picked up and went through the full real pipeline to *Waiting for your approval* |
+
+**Browser walk-through** (`frontend/e2e/features.mjs`, Docker stack, real pipeline): the downloader is
+ready in the container; Settings shows the public-downloads switch; Connect opens the guided
+Google set-up; a watched folder took in a real video and produced clips; a clip was scheduled for
+tomorrow 18:00 and appeared under *Upcoming posts*; chat answered "publish clip 1 tomorrow at
+6pm" with *Scheduled 2 post(s): tomorrow (Sun 22 Nov) at 18:00 UTC*. It found three interface
+bugs that were then fixed: dialogs could render behind page content (they now render at the top
+level of the page), *Clips per video* defaulted to 5 and overrode "make 2 shorts" in the
+instruction, and routine background jobs were listed under *Working on now*.
 
 ## Acceptance tests (Part 26)
 
@@ -217,3 +242,6 @@ Each product fix has a regression test.
 | Cloud AI providers (2) | API keys for OpenAI, Google Gemini and/or Anthropic |
 | WhisperX / faster-whisper transcription | Access to huggingface.co (and ideally a GPU) |
 | Comparison and learning on real data (21–22) | Published videos with a few days of analytics |
+| Real YouTube/Instagram downloads | A network that can reach youtube.com, googlevideo.com and instagram.com (any normal internet connection) |
+| A real one-click sign-in | A registered Google client / Meta app (see [ONE_CLICK_CONNECT.md](ONE_CLICK_CONNECT.md)) and a person at the consent screen |
+| The Windows installer end to end | A Windows 10 (2004+) or 11 PC with virtualization enabled; run `ClipForge-Setup-<version>.exe` |

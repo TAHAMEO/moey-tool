@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -38,12 +38,24 @@ def _get(db: Session, job_id: uuid.UUID) -> Job:
     return job
 
 
+#: Background housekeeping, not work the owner started: never listed as "working on now".
+ROUTINE_PREFIXES = ("maintenance.", "analytics.", "learning.", "folders.", "memory.")
+
+
 @router.get("")
 def list_jobs(active: bool = False, project_id: uuid.UUID | None = None, limit: int = 50, db: Session = Depends(get_db),
               _: Principal = Depends(viewer)) -> list[dict]:
+    from sqlalchemy import and_, not_, or_
+
+    from ...db.base import utcnow
+
     query = select(Job).order_by(Job.created_at.desc()).limit(min(limit, 200))
     if active:
-        query = query.where(Job.status.in_(queue.ACTIVE))
+        # Work in progress only: no housekeeping, and no post waiting in the queue for a later time
+        # (those are listed under Dashboard → Upcoming posts).
+        query = query.where(Job.status.in_(queue.ACTIVE),
+                            not_(or_(*[Job.type.startswith(p) for p in ROUTINE_PREFIXES])),
+                            not_(and_(Job.status == "queued", Job.run_after > utcnow() + timedelta(seconds=60))))
     if project_id:
         query = query.where(Job.project_id == project_id)
     else:

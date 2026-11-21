@@ -5,9 +5,27 @@ It works out which *authorised* ways exist to get the source, picks the best one
 exactly what it checked. The result decides what CLIPFORGE can honestly do with the source.
 
 CLIPFORGE never bypasses DRM, logins, paywalls, private-account restrictions or other platform
-protections, never uses undocumented platform APIs, and does not use third-party downloaders
-(such as yt-dlp) — even where they would technically work. If the best authorised method only
-gives the words, it says so and works with the words; it never pretends it saw the video.
+protections, and never uses undocumented platform APIs. Your own files and the official APIs are
+always tried first. When those can't provide the video, CLIPFORGE can download **videos anyone
+can watch without signing in** with yt-dlp — this is the owner's choice (Settings → Sources,
+switched on by default since you asked for downloads to work) and it is labelled on every
+project that uses it. If the best available method only gives the words, it says so and works
+with the words; it never pretends it saw the video.
+
+### Public downloads (yt-dlp)
+
+| Always | Never |
+|---|---|
+| Runs in the media worker, which holds no secrets | Cookies, passwords, netrc, browser sessions or proof-of-origin token generators |
+| Loads only the YouTube and Instagram extractors, so a link can't make it fetch anything else | Faked location (`geo_bypass` off), TLS/browser impersonation, remote helper code |
+| Applies the size and duration limits before and during the download | Private, members-only, age-restricted, paid or DRM-protected videos |
+| Reports a sign-in wall, removal or block as the matching access state | Live or upcoming streams (their replays are fine once processed) |
+| Says on the project: *use it only if you own the video or have permission* | Publishing clips of someone else's video automatically — you confirm each time |
+
+YouTube runs a JavaScript check before serving video; yt-dlp answers it with YouTube's own player
+code executed in [Deno](https://deno.com) (sandboxed: no file, network or environment access).
+If YouTube asks to *"sign in to confirm you're not a bot"* (it does this for some data-centre IP
+addresses, rarely for home connections), CLIPFORGE reports it instead of working around it.
 
 ## The 12 access states
 
@@ -36,9 +54,12 @@ diagnostics* — every check the resolver made.
 | Situation | Result |
 |---|---|
 | Your own video and its original file is in your **media library** (Settings → Media library, kind *master*) or your connected **Google Drive** — matched by name **and** length | `FULL_MEDIA_ACCESS` |
-| Your own video, no original file found, captions exist | `TRANSCRIPT_ONLY` (downloaded through the YouTube API with your channel's authorisation) |
-| Someone else's public video | `METADATA_ONLY` — YouTube's official API does not provide video downloads, and caption downloads require the video owner's authorisation |
+| Your own video, no original file found, public or unlisted | `FULL_MEDIA_ACCESS` by public download |
+| Your own private video, no original file found, captions exist | `TRANSCRIPT_ONLY` (downloaded through the YouTube API with your channel's authorisation) |
+| Someone else's public or unlisted video | `FULL_MEDIA_ACCESS` by public download — or `METADATA_ONLY` with downloads switched off |
+| Age-restricted video | `LOGIN_REQUIRED` (YouTube shows it only to signed-in adults) |
 | Private / removed video | `SOURCE_PRIVATE` / `SOURCE_UNAVAILABLE` |
+| The download meets a sign-in wall, a block or a removal | The project switches to that state (`LOGIN_REQUIRED`, `ACCESS_DENIED`, `SOURCE_UNAVAILABLE`, …) with the reason |
 
 Simplest alternatives offered: connect Google Drive or add the original to the media library
 (your own videos), upload the file, or ask the creator for permission and the original.
@@ -50,7 +71,8 @@ Simplest alternatives offered: connect Google Drive or add the original to the m
 | Scheduled or currently live, no live feed connected | Project waits (*Waiting for live source*); CLIPFORGE does **not** claim to be watching the stream |
 | A live ingest session is linked to the stream and your encoder is sending | `AUTHORIZED_LIVE_FEED` — clipping while live |
 | Ended, and the recording is in your media library / Drive | `REPLAY_ACCESSIBLE` |
-| Ended, no recording available to CLIPFORGE | Same as a video you don't have the file for (`METADATA_ONLY`) |
+| Ended, recording public on YouTube | `REPLAY_ACCESSIBLE` by public download |
+| Ended, no recording available to CLIPFORGE | Same as a video you don't have the file for |
 
 YouTube's API does not offer a live media feed to third-party apps. To clip a stream while it is
 live, create a live session in **Settings → Live streams** and add the SRT address to OBS (or
@@ -60,10 +82,10 @@ your encoder) as a second output. The feed is encrypted with a per-session passp
 
 | Situation | Result |
 |---|---|
-| No Instagram account connected | `LOGIN_REQUIRED` |
 | Your connected professional account posted it | `FULL_MEDIA_ACCESS` (media URL from the official API; downloads only from Instagram's own CDN hosts) |
 | Instagram withholds the media file (e.g. copyrighted audio) | `ACCESS_DENIED`, with the reason |
-| Another account's Reel | `PERMISSION_REQUIRED` (or `METADATA_ONLY` if oEmbed details are available) |
+| Another account's public Reel or video post | tried as a public download; Instagram shows many posts only to signed-in users, and then the project says `LOGIN_REQUIRED` |
+| With downloads switched off: no account connected / another account's Reel | `LOGIN_REQUIRED` / `PERMISSION_REQUIRED` (or `METADATA_ONLY` if oEmbed details are available) |
 | Not a video post | `UNSUPPORTED_SOURCE` |
 
 ### Google Drive link and direct file links
@@ -94,4 +116,5 @@ de-duplicated by checksum.
 - Titles, descriptions, captions, transcripts and comments are treated as untrusted text:
   instructions embedded in them can't change what the Brain does.
 - Per-source switches in **Settings → Automation & safety** turn fetching from YouTube,
-  Instagram, Google Drive or direct links off entirely.
+  Instagram, Google Drive or direct links off entirely; **Settings → Sources** turns public
+  downloads off while keeping the official methods.

@@ -41,6 +41,9 @@ libass caption builder.
 | FFmpeg 6.1, x264, libass | GPL-2.0-or-later / LGPL | Media processing (separate process) |
 | Node.js 22 (`node:22-bookworm-slim`) | MIT | Web app image |
 | Ollama (optional, `local-ai` profile) | MIT | Local language-model server |
+| Deno 2.9 (PyPI `deno` wheel, inside the backend image) | MIT | Sandboxed JavaScript runtime for yt-dlp's YouTube challenge scripts |
+| Windows installer stub (NSIS 3.09) | zlib/libpng | `ClipForge-Setup.exe` |
+| Ubuntu 24.04 WSL image, Docker Engine (downloaded by the Windows installer on the user's PC) | various (Ubuntu package licences) / Apache-2.0 | CLIPFORGE's WSL 2 environment; not redistributed with CLIPFORGE |
 | WhisperX 3.8.6 + PyTorch (optional, separate environment) | BSD-2-Clause, BSD-3-Clause | High-accuracy transcription; see `sbom/whisperx-worker.cdx.json` |
 
 ## Models
@@ -78,6 +81,7 @@ libass caption builder.
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
 | ctranslate2 | 4.9.0 | MIT |
 | cycler | 0.12.1 | BSD License |
+| deno | 2.9.8 | MIT |
 | distro | 1.9.0 | Apache Software License |
 | dnspython | 2.9.2 | ISC |
 | email-validator | 2.4.0 | The Unlicense (Unlicense) |
@@ -170,6 +174,7 @@ libass caption builder.
 | truststore | 0.10.5 | MIT |
 | typing-inspection | 0.4.5 | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
+| tzdata | 2026.6 | Apache-2.0 |
 | urllib3 | 2.8.0 | MIT |
 | uuid_utils | 0.19.0 | BSD-3-Clause |
 | uvicorn | 0.54.0 | BSD-3-Clause |
@@ -179,6 +184,8 @@ libass caption builder.
 | websockets | 17.4 | BSD-3-Clause |
 | xxhash | 4.1.0 | BSD-2-Clause |
 | yarl | 1.25.1 | Apache-2.0 |
+| yt-dlp | 2026.10.26 | Unlicense |
+| yt-dlp-ejs | 0.8.0 | Unlicense AND MIT AND ISC |
 | zstandard | 0.25.0 | BSD-3-Clause |
 
 ## JavaScript packages (web app production dependencies, from `frontend/package-lock.json`)

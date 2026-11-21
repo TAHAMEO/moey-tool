@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import { Loader2, X } from "lucide-react";
 import { type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
@@ -198,8 +199,10 @@ export function Modal({ open, onClose, title, children, footer, wide }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-  if (!open) return null;
-  return (
+  if (!open || typeof document === "undefined") return null;
+  // Rendered at the end of <body>: an animated (transformed) ancestor would otherwise trap the
+  // fixed-position overlay inside it and let later page content paint over the dialog.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
         role="dialog"
@@ -219,7 +222,7 @@ export function Modal({ open, onClose, title, children, footer, wide }: {
         {footer && <div className="flex justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>}
       </div>
     </div>
-  );
+  , document.body);
 }
 
 export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (value: T) => void; tabs: { value: T; label: string; count?: number }[] }) {

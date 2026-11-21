@@ -67,6 +67,10 @@ if [[ ! -d "$INBOX_HOST" ]]; then
   say "Creating the watched-folder inbox at $INBOX_HOST"
   mkdir -p "$INBOX_HOST"
 fi
+# Show the folder's real location in the app (Process a folder), unless something else set it.
+if grep -qE '^CLIPFORGE_INBOX_DISPLAY=$' .env; then
+  sed -i "s|^CLIPFORGE_INBOX_DISPLAY=$|CLIPFORGE_INBOX_DISPLAY=$(cd "$INBOX_HOST" && pwd)|" .env
+fi
 
 if [[ -n "$EXTRA_CA" ]]; then
   [[ -f "$EXTRA_CA" ]] || fail "CA file not found: $EXTRA_CA"

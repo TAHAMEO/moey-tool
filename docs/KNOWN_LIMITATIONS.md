@@ -15,6 +15,22 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
   against local fakes of those APIs — **not** against the real platforms. Expect to find small
   differences on first real use (field names, error codes, timing); the error handling surfaces
   them clearly rather than failing silently.
+- **Public video downloads** (yt-dlp) were verified end to end against a local web server (download,
+  limits, storage, media-worker job, honest error states, workflow routing), but **not** against
+  YouTube or Instagram, which were unreachable. YouTube changes its player regularly; keep yt-dlp
+  and its challenge-solver package (`yt-dlp-ejs`) current — rebuilding the images picks up the
+  pinned versions, and newer ones are a one-line change in `backend/pyproject.toml`.
+- **Scheduled publishing** — YouTube's `publishAt` flow, moving/cancelling/holding a waiting
+  video, and Instagram's publish-at-the-minute flow — is verified with contract tests against
+  the local fakes, for the same reason.
+- **One-click connect** (Desktop-app loopback sign-in, the Instagram relay page, in-app app set-up)
+  is verified against local fakes of Google's and Instagram's OAuth endpoints and, for the relay
+  page, in a real Chromium browser. A real sign-in needs a registered app and a person at the
+  consent screen.
+- **The Windows installer** was built and its scripts tested here (PowerShell 7 on Linux with a
+  stand-in `wsl.exe`, the real Ubuntu WSL image, and the in-Linux set-up run inside that exact
+  image), but it could **not** be run on a real Windows 10/11 PC from this environment. Turning on
+  WSL 2, the restart-and-resume path and the shortcuts are untested on real hardware.
 - **Cloud AI providers** (OpenAI, Gemini, Anthropic) are verified with contract tests only. Real
   model calls were verified with local models (Llama 3.2 1B and Qwen 2.5 3B through Ollama).
 - **WhisperX**: its isolated environment installs from the hashed lock file and imports
@@ -24,13 +40,24 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
 
 ## Platform rules (by design, not bugs)
 
-- **Other people's YouTube videos** give metadata only: YouTube's API has no download endpoint,
-  caption downloads require the owner's authorisation, and CLIPFORGE does not use unofficial
-  downloaders. Your own videos work when the original file is in the media library or Google Drive.
+- **Other people's videos** are downloaded only when anyone can watch them without signing in,
+  and only while *Settings → Sources → public downloads* is on. Whether you may reuse them is your
+  responsibility (YouTube's and Instagram's terms restrict downloading other people's content;
+  copyright applies). Age-restricted, members-only, private, paid and DRM videos are never
+  downloaded. YouTube sometimes asks data-centre IP addresses to sign in ("confirm you're not a
+  bot"); CLIPFORGE reports that rather than working around it — home connections are rarely asked.
+- **Instagram** shows many posts only to signed-in users; for those the project reports
+  `LOGIN_REQUIRED`. Your own Reels always work through the official API once Instagram is connected.
 - **YouTube livestreams** have no live media feed for apps. Live clipping needs your encoder to
   send the stream to CLIPFORGE (SRT); otherwise the replay is processed once its file is available.
-- **Instagram** only gives apps the media of the connected professional account. It may withhold
-  the media file of posts with licensed music.
+- **Instagram's API** only gives apps the media of the connected professional account. It may
+  withhold the media file of posts with licensed music.
+- **Instagram has no scheduling in its API**, so scheduled Reels are published by CLIPFORGE at the
+  time: CLIPFORGE must be running then. Public YouTube videos are scheduled with YouTube itself and
+  go out even when CLIPFORGE is off.
+- **Instagram sign-in needs an HTTPS redirect address**; installations on `http://localhost` use
+  the static relay page (`deploy/oauth-relay/instagram.html`), which you publish once on any HTTPS
+  host. Google Desktop-app clients need nothing extra.
 - **Unverified Google projects** upload to YouTube as private until the project passes YouTube's
   API audit; apps in *Testing* get refresh tokens that expire after 7 days.
 - **YouTube API quota**: 10,000 units/day by default ≈ four uploads with captions and thumbnails.
@@ -59,7 +86,16 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
 - **Music, B-roll and logos** come only from the owner's own library (rights confirmed). There is
   no stock media library.
 - **Live ingest**: SRT only (RTMP isn't offered because FFmpeg's RTMP listener does not check
-  stream keys), 4 concurrent sessions per main worker, OBS or another SRT-capable encoder.
+  stream keys), 4 concurrent sessions per main worker, OBS or another SRT-capable encoder. On
+  Windows, WSL forwards TCP but not UDP to `localhost`, so SRT ingest from the same PC needs WSL's
+  mirrored networking (Windows 11 22H2+) or a server.
+- **Watched folders** are checked every minute (no instant file-system events), take a file once
+  it has stopped changing, and on Windows read `Videos\ClipForge` through WSL's file sharing,
+  which is slower than a Linux disk for very large files.
+- **Chat time phrases** cover the common forms ("tomorrow at 6pm", "Friday 9:30", "on 25 November
+  at 18:00", "in 2 hours", "every day at 6pm"); unusual wordings are not understood — use the
+  date picker. Bare hours 1–7 are read as afternoon/evening. CLIPFORGE always repeats the exact
+  time it understood.
 - **Backups** cover the database and memory, not rendered media files (snapshot the data volume
   or use S3 with versioning). Local-volume storage can't be shared between servers; multi-server
   setups need S3 storage.

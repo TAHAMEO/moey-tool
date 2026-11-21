@@ -14,7 +14,8 @@ Ubuntu 24.04 with systemd. Both run the same code.
 
 Outbound access needed: your AI providers, `*.googleapis.com` / `oauth2.googleapis.com`,
 `graph.instagram.com` / `rupload.facebook.com` (publishing), `storage.googleapis.com` (vision/audio
-models, first run), `alphacephei.com` (speech model, first run).
+models, first run), `alphacephei.com` (speech model, first run), and — for public video
+downloads — `www.youtube.com`, `*.googlevideo.com`, `www.instagram.com` and `*.cdninstagram.com`.
 
 ## Docker Compose
 
@@ -72,44 +73,15 @@ CLIPFORGE picks the best available engine automatically: WhisperX → faster-whi
 
 ## Windows
 
-CLIPFORGE runs on Windows 10 (22H2) and Windows 11 on x86-64 PCs through **Docker Desktop** with
-its WSL 2 engine; the containers are the same Linux images as on a server. Running it natively on
-Windows without Docker is not supported.
+Use the installer: **ClipForge-Setup-&lt;version&gt;.exe** turns on WSL 2 if needed, creates
+CLIPFORGE's own Linux environment with the free Docker Engine (no Docker Desktop), builds
+CLIPFORGE, downloads the speech model and adds Start menu shortcuts — with a progress window, and
+continuing by itself if Windows has to restart. Everything is in **[WINDOWS.md](WINDOWS.md)**.
 
-1. Install Docker Desktop and keep *Use the WSL 2 based engine* switched on. (Docker Desktop is free
-   for personal use and small businesses; larger organisations need a paid Docker subscription.)
-2. Install Ubuntu for WSL — in PowerShell as administrator: `wsl --install -d Ubuntu` — then enable it
-   under Docker Desktop → *Settings → Resources → WSL integration*.
-3. Give WSL enough memory (it gets half of your RAM by default; the media worker needs about
-   5.5 GB). Create `C:\Users\<you>\.wslconfig` with
-
-   ```
-   [wsl2]
-   memory=12GB
-   ```
-
-   then run `wsl --shutdown` in PowerShell and restart Docker Desktop.
-4. In the **Ubuntu** terminal, clone into the Linux file system (much faster than a `C:\` folder)
-   and run the installer:
-
-   ```bash
-   git clone <repository URL> ~/clipforge && cd ~/clipforge
-   ```
-
-   ```bash
-   bash scripts/install.sh
-   ```
-
-5. Open http://localhost:3000 in your Windows browser.
-
-Notes:
-
-- ARM-based Windows laptops would run the x86-64 images under emulation; that is not supported.
-- OBS on the same PC can stream to the live-session address CLIPFORGE shows; Windows Firewall may
-  ask to allow Docker on ports 3000 and 9000–9003.
-- Scheduled publishing and analytics collection only run while the PC is on and Docker Desktop is
-  running. For a 24/7 setup and HTTPS (needed for Instagram sign-in), use a server — see
-  [DEPLOYMENT.md](DEPLOYMENT.md).
+Prefer Docker Desktop? It works too: with its WSL 2 engine and the Ubuntu integration switched
+on, clone this repository inside Ubuntu (`~/clipforge`, not a `C:\` folder) and run
+`bash scripts/install.sh`. Give WSL enough memory (`%USERPROFILE%\.wslconfig`: `[wsl2]`,
+`memory=12GB`). Docker Desktop is free for personal use and small businesses only.
 
 ## Bare metal (Ubuntu 24.04, systemd)
 

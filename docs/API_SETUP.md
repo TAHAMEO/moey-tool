@@ -1,8 +1,15 @@
 # API setup: YouTube, Instagram and AI providers
 
 CLIPFORGE talks to platforms only through their official APIs, using apps that **you** own.
-This is a one-time setup. Values go into `.env` (then `docker compose up -d`); AI keys are
-entered in the app under **AI Connections** and stored encrypted.
+This is a one-time setup.
+
+> **Easiest way:** click **Connect** in *Settings → Accounts*. If no app is set up yet, CLIPFORGE
+> opens a guided set-up with these steps and the values to copy, checks what you paste and saves
+> it encrypted — no `.env` editing, no restart. A copy of CLIPFORGE can also come with the apps
+> built in, making Connect one click for everyone: see [ONE_CLICK_CONNECT.md](ONE_CLICK_CONNECT.md).
+> The `.env` variables below still work and are used when nothing is saved in the app.
+
+AI keys are entered in the app under **AI Connections** and stored encrypted.
 
 Your public address matters: OAuth redirect URIs are derived from `CLIPFORGE_PUBLIC_BASE_URL`.
 Google and Meta require **HTTPS** redirect URIs except for `http://localhost`, so set up HTTPS
@@ -45,8 +52,10 @@ first (see [DEPLOYMENT.md](DEPLOYMENT.md)) if CLIPFORGE runs on a server.
 
 ### OAuth client
 
-6. **Credentials → Create credentials → OAuth client ID**, type **Web application**.
-7. Authorised redirect URI — exactly (no trailing slash):
+6. **Credentials → Create credentials → OAuth client ID**. Type **Desktop app** if CLIPFORGE runs
+   on your own computer (nothing else to enter — Google returns to `http://localhost:<port>`),
+   or **Web application** for a server, with this redirect URI:
+7. Authorised redirect URI (Web application only) — exactly (no trailing slash):
    ```
    <CLIPFORGE_PUBLIC_BASE_URL>/api/connections/google/callback
    ```
@@ -95,8 +104,14 @@ Publishing uses the **Instagram API with Instagram Login**. Requirements: an Ins
    ```
    <CLIPFORGE_PUBLIC_BASE_URL>/api/connections/instagram/callback
    ```
+   Instagram accepts only **https://** addresses. If CLIPFORGE runs on your PC
+   (`http://localhost`), publish the small sign-in relay page
+   [`deploy/oauth-relay/instagram.html`](../deploy/oauth-relay/instagram.html) on any HTTPS host
+   (GitHub Pages works), register *its* address here, and enter it as the relay page in
+   CLIPFORGE's set-up (or `CLIPFORGE_INSTAGRAM_RELAY_URL`). It only ever forwards the sign-in to
+   CLIPFORGE on the same computer — details in [ONE_CLICK_CONNECT.md](ONE_CLICK_CONNECT.md).
 3. Copy the **Instagram app ID** and **Instagram app secret** shown on that page (not the Meta
-   app ID at the top of the dashboard) into `.env`:
+   app ID at the top of the dashboard) into CLIPFORGE's set-up dialog — or into `.env`:
    ```
    CLIPFORGE_META_APP_ID=<Instagram app ID>
    CLIPFORGE_META_APP_SECRET=<Instagram app secret>
@@ -108,7 +123,7 @@ Publishing uses the **Instagram API with Instagram Login**. Requirements: an Ins
    **App roles → Roles → Add Instagram tester**, then accept the invite in the Instagram app
    (*Settings → Website permissions / Apps and websites → Tester invites*). Connecting other
    people's accounts requires Meta App Review for these permissions and business verification.
-6. Restart, then **Settings → Accounts → Instagram → Connect**.
+6. **Settings → Accounts → Instagram → Connect** (after a restart if you used `.env`).
 
 Notes:
 

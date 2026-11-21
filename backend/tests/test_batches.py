@@ -275,3 +275,38 @@ def test_ingest_ignores_files_that_changed_after_they_were_seen(inbox):
     with session_scope() as db:
         assert queue.ACTIVE  # sanity
         assert db.execute(select(Job).where(Job.type == "batch.ingest_file", Job.status == "queued")).first() is not None
+
+
+# ------------------------------------------------------------------------ chat
+def test_chat_starts_watching_a_folder_with_a_recipe(inbox, owner_client):
+    _video(inbox / "Podcast" / "ep1.mp4")
+    (inbox / "Gaming").mkdir()
+    with session_scope() as db:
+        app_settings.update_section(db, "publishing", {"timezone": "Europe/London"})
+    conversation = owner_client.post("/api/chat/conversations", json={}).json()["id"]
+
+    def say(text: str) -> str:
+        res = owner_client.post(f"/api/chat/conversations/{conversation}/messages", json={"text": text, "timezone": "Europe/London"})
+        assert res.status_code == 200, res.text
+        return res.json()["content"]
+
+    reply = say("Process all videos in the podcast folder: make 2 shorts each and post one every day at 6pm")
+    assert "now watching “Podcast”" in reply and "1 video(s) already in it" in reply and "wait for your approval" in reply
+    with session_scope() as db:
+        watch = db.execute(select(WatchFolder)).scalar_one()
+        recipe = Recipe(**watch.recipe)
+        assert watch.path == "Podcast" and recipe.publish == "approve"
+        assert recipe.schedule.mode == "slots" and recipe.schedule.times == ["18:00"]
+        request = recipe.to_request(db, batch_id="x")
+        assert request["count"] == 2 and request["schedule_slots"]
+        assert db.execute(select(Job).where(Job.type == "folders.scan")).first() is not None
+    again = say("process the podcast folder")
+    assert "already watching “Podcast”" in again
+    missing = say("watch the Interviews folder and make reels")
+    assert "couldn't find a folder called “Interviews”" in missing and "“Gaming”" in missing and "“Podcast”" in missing
+    auto = say("make shorts from the Gaming folder and post them automatically every 3 hours from 9am")
+    assert "posted without asking" in auto
+    with session_scope() as db:
+        gaming = db.execute(select(WatchFolder).where(WatchFolder.path == "Gaming")).scalar_one()
+        assert Recipe(**gaming.recipe).publish == "auto"
+        assert Recipe(**gaming.recipe).schedule.times == ["09:00", "12:00", "15:00", "18:00", "21:00"]

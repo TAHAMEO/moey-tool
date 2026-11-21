@@ -28,6 +28,9 @@ Type what you want in plain language. Examples:
 | `Remember that my audience is mostly small business owners` | saved permanently; used in future work |
 | `Forget that I like boxed captions` | shows matching memories to delete |
 | `Approve clip 1 and 2` / `publish the best one to YouTube` | approval and publishing |
+| `Publish clip 2 tomorrow at 6pm` / `post them every day at 18:00 starting Friday` | schedules posts for exact times (your browser's time zone) |
+| `Make 3 Shorts from https://youtu.be/… and post them tomorrow at 9am` | makes the clips and, once approved, schedules them |
+| `Process all videos in the Podcast folder: 2 shorts each, post one a day at 6pm` | watches that inbox folder with this recipe (see *Processing a whole folder*) |
 | `Hold off posting for now` / `resume publishing` | switches publishing off/on (processing continues) |
 | `Pause everything` / `resume everything` / `emergency stop` | automation controls (admins) |
 | `Give me a tip for Shorts titles` | answered by your AI connection and saved as knowledge |
@@ -58,13 +61,69 @@ Every source you've sent, newest first, filterable by *In progress*, *Ready*, *P
 - **Downloads** — MP4, SRT and VTT.
 - **Adjust** — change the start/end or the caption style and re-render.
 - **Packages** — the YouTube title, description, tags and visibility, and the Instagram caption
-  and hashtags. Edit, save, then **Publish…**. A video is marked *published* only after the
-  platform confirms it; uploading the same file twice is blocked.
+  and hashtags. Edit, save, then **Publish…** (now) or **Schedule…** (an exact date and time —
+  see *Scheduling* below). A video is marked *published* only after the platform confirms it;
+  uploading the same file twice is blocked.
 - **Results** — views, likes, comments and more as the platform reports them. Metrics a platform
   doesn't provide are listed as unavailable, never shown as zero.
 - **Advanced diagnostics** — every access check and the job's timeline, shown when *Settings →
   Advanced → Show technical details* is on. Errors and the *Retry* button (which resumes from the
   last completed step) are always shown.
+
+### Scheduling posts
+
+Choose **Schedule…** on a package (or schedule while approving, or in chat) and pick the date
+and time; times are in your own time zone.
+
+- **Public YouTube videos** scheduled at least 15 minutes ahead are uploaded right away as
+  *private* with that publish time, and **YouTube itself** makes them public — even if your
+  computer is off by then. CLIPFORGE checks afterwards and only then marks them published.
+- **Instagram** (its API cannot schedule) and **unlisted/private YouTube** videos are prepared
+  about 10 minutes early and published by CLIPFORGE at the exact minute, so CLIPFORGE must be
+  running then. If it wasn't (PC off), a post that would be more than 3 hours late (Settings →
+  Publishing) waits for you instead: it shows *Missed its time* with **Pick a new time** and
+  **Publish now**.
+- **Change time**, **Publish now** and **Cancel schedule** are on the package. Edits saved before
+  the time are used, also for videos already waiting on YouTube.
+- Approvals can spread several clips out (*one per hour/day/week*); both platforms of one clip go
+  out together. Daily limits are checked for the day you choose.
+- **Dashboard → Upcoming posts** lists everything scheduled, and how each one goes out.
+- *Hold publishing* keeps the times but nothing goes out (videos waiting on YouTube are switched
+  back to private meanwhile); *emergency stop* cancels every schedule. *Pause* only stops
+  CLIPFORGE's own work — posts already handed to YouTube still go live.
+
+### Processing a whole folder
+
+**My Videos → Process a folder** runs one recipe over many videos:
+
+- **A folder on this device** — choose a folder; every video in it is uploaded and processed as
+  soon as it arrives (keep the tab open while it uploads).
+- **Watch a CLIPFORGE folder** — choose a folder in CLIPFORGE's inbox (on Windows
+  `Videos\ClipForge`; on a server the `inbox` folder next to `docker-compose.yml`). Videos
+  already in it (optional) and every video you put there later are processed automatically. A
+  file is taken only once it has stopped changing, so copying a large file in is safe. Your files
+  are never changed unless you ask CLIPFORGE to move finished ones into a `Processed` sub-folder.
+
+The recipe: what to make (plain language, like a chat message), clips per video, platforms,
+what happens when clips are ready (*Keep as drafts*, *Ask me first*, *Post automatically*),
+YouTube visibility and **posting times** — e.g. one clip at 09:00 and one at 18:00 every day,
+lined up across all videos of the batch and skipping days that already reach your daily limit.
+Duplicate videos are skipped. Each batch shows its progress on My Videos, with *Show its videos*,
+*Pause*, *Resume*, *Stop watching* and *Cancel*.
+
+You can also just tell Brain Chat: *"Process all videos in the Podcast folder: make 2 shorts each
+and post one every day at 6pm"* (add *automatically* to post without asking). If the folder doesn't
+exist yet, it tells you where the inbox is and which folders are there.
+
+### Links from other creators
+
+With **Settings → Sources → Download public YouTube and Instagram videos** on (the default),
+CLIPFORGE downloads videos anyone can watch without signing in (with yt-dlp) when it can't get
+your own original file. It never signs in, uses cookies or fakes its location: private,
+members-only, age-restricted, paid and DRM-protected videos are reported, not worked around, and
+Instagram posts that need a sign-in say so. **Only use videos you own or have permission to
+reuse.** Clips from another creator's video are never published automatically — you confirm
+them, with a reminder about rights.
 
 ## AI Connections
 
@@ -104,8 +163,9 @@ titles come from templates.
 
 | Section | |
 |---|---|
-| Publishing | Ask me first / Publish automatically / Drafts only; platforms; daily limits; YouTube visibility, playlist, caption track; Instagram feed sharing; made-for-kids |
-| Accounts | Connect or disconnect YouTube, Instagram and Google Drive (OAuth on the platform's own page) |
+| Publishing | Ask me first / Publish automatically / Drafts only; platforms; time zone; late-post limit; daily limits; YouTube visibility, playlist, caption track; Instagram feed sharing; made-for-kids |
+| Accounts | Connect or disconnect YouTube, Instagram and Google Drive with one click (sign-in on the platform's own page in a pop-up); a guided one-time set-up if this copy doesn't have its Google/Instagram app built in |
+| Sources | Download public YouTube/Instagram videos (on/off) |
 | Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music |
 | Brand | Channel name, accent colour (highlighted caption word), watermark and its position |
 | Live streams | Create live sessions and get the SRT address for OBS |
@@ -137,9 +197,17 @@ Platforms don't let apps watch a livestream, so CLIPFORGE receives the stream fr
 
 ## Questions
 
-**Why does a YouTube link only show "Details only"?** YouTube's official API doesn't offer video
-downloads, and CLIPFORGE doesn't use unofficial downloaders. For your own videos, add the original
-file to the media library or connect Google Drive; otherwise upload a file you have rights to.
+**Why does a YouTube link only show "Details only"?** Downloading public videos is switched off in
+Settings → Sources, or the video isn't public (private, age-restricted, members-only). For your
+own videos you can also add the original file to the media library or connect Google Drive.
+
+**Why did an Instagram link say "sign-in required"?** Instagram shows many posts only to signed-in
+users, and CLIPFORGE doesn't sign in to see other accounts' posts. If it's your Reel, connect your
+Instagram account; otherwise upload the file.
+
+**Do I have to keep my PC on for scheduled posts?** For public YouTube videos, no: YouTube
+publishes them. For Instagram (and unlisted/private YouTube), yes — CLIPFORGE publishes those at
+the time. On Windows, choose *Start CLIPFORGE when I sign in* in setup.
 
 **Why are my uploads private on YouTube?** CLIPFORGE uploads as private by default, and Google keeps
 uploads from unverified API projects private until the project passes YouTube's API audit

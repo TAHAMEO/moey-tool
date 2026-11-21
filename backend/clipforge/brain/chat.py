@@ -424,6 +424,76 @@ def _describe_plan(times: list, tzname: str) -> str:
     return f"{first}, the last one {when.describe(ordered[-1], tzname)}"
 
 
+def _folder_schedule(found: when.When, zone) -> dict:
+    """Batch posting times from a chat phrase: "every day at 6pm" → 18:00; "every 3 hours from 9am" → 09:00, 12:00, …"""
+    first = found.at.astimezone(zone)
+    times = [first.strftime("%H:%M")]
+    step = found.every_minutes or 0
+    if 0 < step < 1440:
+        minutes = first.hour * 60 + first.minute + step
+        while minutes < 1440 and len(times) < 8:
+            times.append(f"{minutes // 60:02d}:{minutes % 60:02d}")
+            minutes += step
+    return {"mode": "slots", "times": times, "start_date": first.date().isoformat()}
+
+
+def _act_process_folder(state: ChatState) -> ChatState:
+    """ "Process all videos in the Podcast folder…": watch that inbox folder with a recipe read from the message."""
+    import re
+
+    from ..batches import service as batches
+    from ..batches.recipe import Recipe
+    from ..db.models import Batch, WatchFolder
+
+    _require(state, "editor")
+    parsed = state["parsed"]
+    name = (parsed.get("folder") or "").strip()
+    wanted, _tzname, time_problem = _wanted_time(state) if parsed.get("publish") else (None, "", None)
+    with session_scope() as db:
+        try:
+            listing = batches.browse("")
+        except batches.BatchError as exc:
+            return {"facts": {"folder_error": str(exc)}}
+        folders = listing["folders"]
+        match = next((f for f in folders if f["name"].lower() == name.lower()), None) or \
+            next((f for f in folders if f["name"].lower().startswith(name.lower())), None)
+        if match is None:
+            return {"facts": {"folder_missing": name, "available": [f["name"] for f in folders], "root": listing["root"]},
+                    "actions": [{"step": "Looked for the folder", "detail": f"no folder called {name} in the inbox"}]}
+        watched = db.execute(select(WatchFolder).where(WatchFolder.path == match["path"])).scalar_one_or_none()
+        if watched is not None:
+            batch = db.get(Batch, watched.batch_id) if watched.batch_id else None
+            return {"facts": {"already": match["name"], "enabled": watched.enabled,
+                              "counts": batches.summary(db, batch)["counts"] if batch else None},
+                    "cards": [{"type": "link", "href": "/videos", "label": "Open My Videos"}],
+                    "actions": [{"step": "Checked the folder", "detail": "already watched"}]}
+        lower = state["text"].lower()
+        publish = "drafts"
+        if parsed.get("publish"):
+            publish = "auto" if re.search(r"\b(automatic(ally)?|auto[- ]?(post|publish)|without (asking|approval)|don'?t ask)\b",
+                                          lower) else "approve"
+        plan = _folder_schedule(wanted, schedule.zone(db)) if wanted is not None and publish != "drafts" else {"mode": "now"}
+        publishing = app_settings.get_section(db, "publishing")
+        recipe = Recipe(instruction=state["text"][:2000], platforms=parsed.get("platforms") or list(publishing.platforms),
+                        publish=publish, schedule=plan)
+        try:
+            folder = batches.create_watch_folder(db, path=match["path"], recipe=recipe, name=None,
+                                                 user_id=uuid.UUID(state["user_id"]))
+        except batches.BatchError as exc:
+            return {"facts": {"folder_error": str(exc)}}
+        queue.enqueue(db, "folders.scan", {}, dedupe_key="folders-scan-now", priority=60)
+        root = listing["root"]
+        sep = "\\" if "\\" in root else "/"  # show the path the way the owner's computer writes it
+        where = root.rstrip("/\\") + sep + match["path"].replace("/", sep)
+        facts = {"watching": match["name"], "where": where,
+                 "videos": match["videos"], "summary": recipe.summary(), "publish": publish,
+                 "assumed_time": bool(wanted and wanted.assumed_time), "batch_id": str(folder.batch_id)}
+        if time_problem:
+            facts["time_problem"] = time_problem
+    return {"facts": facts, "cards": [{"type": "link", "href": "/videos", "label": "Follow it in My Videos"}],
+            "actions": [{"step": "Started watching a folder", "detail": f"{match['name']}: {recipe.summary()}"}]}
+
+
 def _act_control(state: ChatState) -> ChatState:
     _require(state, "admin")
     action = state["parsed"]["control_action"]
@@ -512,6 +582,7 @@ def _act_conversation(state: ChatState) -> ChatState:
 
 _ACTIONS = {
     "process_source": _act_process,
+    "process_folder": _act_process_folder,
     "status": _act_status,
     "remember": _act_remember,
     "forget": _act_forget,
@@ -558,6 +629,36 @@ def _reply_process(state: ChatState) -> str:
     for problem in facts.get("problems", []):
         lines.append(f"⚠️ {problem['error']}" + (f" {problem['hint']}" if problem.get("hint") else ""))
     return "\n\n".join(lines) or "I couldn't find a link I can work with. Paste a YouTube or Instagram link (or upload a file)."
+
+
+def _reply_process_folder(state: ChatState) -> str:
+    facts = state["facts"]
+    if facts.get("folder_error"):
+        return f"I couldn't watch that folder: {facts['folder_error']}"
+    if "folder_missing" in facts:
+        available = facts.get("available") or []
+        listed = ("Folders there now: " + ", ".join(f"“{n}”" for n in available) + ".") if available else "It has no sub-folders yet."
+        return (f"I couldn't find a folder called “{facts['folder_missing']}” in CLIPFORGE's inbox ({facts['root']}). {listed} "
+                "Create the folder there, put your videos in it, and ask me again — or use My Videos → Process a folder.")
+    if "already" in facts:
+        counts = facts.get("counts") or {}
+        state_text = "I'm already watching" if facts.get("enabled") else "I watched"
+        return (f"{state_text} “{facts['already']}”: {counts.get('total', 0)} video(s) so far — {counts.get('processing', 0) + counts.get('waiting', 0)} in "
+                f"progress, {counts.get('ready', 0)} ready, {counts.get('scheduled', 0)} scheduled, {counts.get('published', 0)} published. "
+                "Change its settings or stop watching in My Videos.")
+    lines = [f"I'm now watching “{facts['watching']}” ({facts['where']}). "
+             + (f"The {facts['videos']} video(s) already in it start within a minute, and " if facts.get("videos") else "")
+             + f"every video you add there is processed automatically: {facts['summary']}."]
+    if facts.get("publish") == "approve":
+        lines.append("Each video's clips wait for your approval before anything is posted.")
+    elif facts.get("publish") == "auto":
+        lines.append("Clips that pass every quality check are posted without asking, within your daily limits.")
+    if facts.get("assumed_time"):
+        lines.append("You didn't give a time of day, so I used 09:00 — change it in My Videos if you like.")
+    if facts.get("time_problem"):
+        lines.append(f"⚠️ {facts['time_problem'][:1].upper()}{facts['time_problem'][1:]}, so clips go out as soon as they're ready instead.")
+    lines.append("Files are taken once they've finished copying; your files themselves are never changed.")
+    return "\n\n".join(lines)
 
 
 def _reply_status(state: ChatState) -> str:
@@ -699,6 +800,7 @@ def _reply_conversation(state: ChatState) -> str:
 
 _REPLIES = {
     "process_source": _reply_process,
+    "process_folder": _reply_process_folder,
     "status": _reply_status,
     "remember": _reply_remember,
     "forget": lambda s: "Here are the memories that look related. Choose which to delete." if s["facts"]["matches"] else "I couldn't find a matching memory.",

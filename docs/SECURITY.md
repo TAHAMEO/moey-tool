@@ -36,6 +36,17 @@ that exist, and how to operate them. Report vulnerabilities privately to the rep
 - **Isolation:** the media worker container receives no master key, no platform secrets and
   cannot decrypt anything (`SecretsUnavailable`). The images contain no secrets; `.env` is
   excluded from the build context. Build-time proxy certificates are used only in builder stages.
+- **OAuth apps** (Google client, Instagram app) saved through *Settings → Accounts* are stored
+  like API keys (AES-256-GCM, admin-only, audit-logged). A copy can also have them built in
+  (`config/oauth-apps.json`, mounted read-only, git-ignored): a Google *Desktop app* secret is not
+  confidential by design, but a Meta app secret is — see [ONE_CLICK_CONNECT.md](ONE_CLICK_CONNECT.md)
+  before shipping one. A saved Google client is checked with Google before it is kept.
+- **Sign-in returns:** a Desktop-app client returns only to the loopback address the browser used
+  (`http://localhost`/`127.0.0.1`, validated); the Instagram relay page
+  (`deploy/oauth-relay/instagram.html`) is static, sends no referrer, has a hash-pinned
+  Content-Security-Policy and forwards only to `localhost`/`127.0.0.1` on a port named in the
+  CLIPFORGE-issued `state` — anything else is refused (tested in Chromium). The `state` stays
+  single-use, user-bound and short-lived.
 
 ## Untrusted content
 
@@ -80,6 +91,15 @@ addresses. `CLIPFORGE_SSRF_PRIVATE_ALLOWLIST` exists for development only.
   de-duplication by SHA-256; temporary files are removed on every error path.
 - FFmpeg in the media worker uses `-protocol_whitelist file,pipe` and a container-format whitelist.
 - Library items (music, logos, B-roll) are used in edits only after the owner confirms the rights.
+- **Public downloads (yt-dlp)** run in the media worker (no secrets). Only the YouTube and
+  Instagram extractors are loaded, so a link can't make yt-dlp fetch other hosts; no cookies,
+  credentials, netrc, location faking, impersonation or remote code; size and duration limits
+  apply during the download. YouTube's challenge script runs in Deno, which yt-dlp starts without
+  file, network or environment permissions.
+- **Watched folders:** paths are resolved inside the inbox root only (`..`, `~` and symlinks that
+  leave it are refused; symlinks are never followed while scanning), files are copied — never
+  opened in place — and validated like uploads; CLIPFORGE writes to the folder only if the owner
+  asks it to move finished videos to `Processed`.
 
 ## Deployment hardening
 
@@ -90,6 +110,16 @@ addresses. `CLIPFORGE_SSRF_PRIVATE_ALLOWLIST` exists for development only.
 - Use HTTPS for anything beyond `localhost` (`./scripts/install.sh --domain …`).
 - Back up regularly and copy backups off the server; backups contain encrypted credentials
   but never the master key.
+
+### Windows installer
+
+- Runs elevated once (to turn on WSL 2); everything else runs as the user. CLIPFORGE lives in its
+  own WSL 2 environment, separate from other Linux environments on the PC.
+- The Ubuntu image is downloaded over HTTPS and its SHA-256 is pinned in the script; a fallback
+  WSL package is installed only if Windows confirms Microsoft's Authenticode signature. Docker
+  Engine comes from Docker's signed apt repository.
+- `.env` (master key, database password) is created inside the WSL environment with mode 600 and
+  is kept on updates. The installer never stores passwords or tokens on the Windows side.
 
 ## Controls for automation
 

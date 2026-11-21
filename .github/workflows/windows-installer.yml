@@ -1,0 +1,49 @@
+# Builds the Windows installer and checks its scripts. GitHub's Windows runners can't run WSL 2
+# (no nested virtualization), so the full install is tested on a real PC; this checks everything else.
+name: Windows installer
+
+on:
+  push:
+    paths:
+      - "installer/windows/**"
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NSIS
+        run: sudo apt-get update -q && sudo apt-get install -y -q nsis
+      - name: Build ClipForge-Setup.exe
+        run: installer/windows/build.sh
+      - name: Test the installer scripts (stand-in wsl.exe, real Ubuntu image)
+        run: |
+          curl -fsSLo /tmp/rootfs.tar.gz https://cloud-images.ubuntu.com/wsl/releases/24.04/20240423/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz
+          echo "8251e27ffff381a4af5f41dcb94d867de3e0d9774a9241908ab34555d99315ea  /tmp/rootfs.tar.gz" | sha256sum -c
+          pwsh -NoProfile -File installer/windows/tests/run-tests.ps1 -Rootfs /tmp/rootfs.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClipForge-Setup
+          path: installer/windows/build/ClipForge-Setup-*.exe*
+
+  windows-powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scripts parse in Windows PowerShell 5.1 (what Windows 10/11 ship)
+        shell: powershell
+        run: |
+          foreach ($file in Get-ChildItem installer/windows/scripts/*.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
+            if ($errors) { $errors | ForEach-Object { "$($file.Name): $($_.Message)" }; exit 1 }
+            "$($file.Name) parses"
+          }
+      - name: Preflight checks on a real Windows machine
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step preflight -InstallDir "$env:RUNNER_TEMP\ClipForge"
