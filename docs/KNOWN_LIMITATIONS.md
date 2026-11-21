@@ -29,8 +29,11 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
   consent screen.
 - **The Windows installer** was built and its scripts tested here (PowerShell 7 on Linux with a
   stand-in `wsl.exe`, the real Ubuntu WSL image, and the in-Linux set-up run inside that exact
-  image), but it could **not** be run on a real Windows 10/11 PC from this environment. Turning on
-  WSL 2, the restart-and-resume path and the shortcuts are untested on real hardware.
+  image), and on a real Windows runner in GitHub Actions its scripts parse in Windows PowerShell 5.1
+  and the PC checks run and pass. A full installation could **not** be run: GitHub's Windows
+  runners can't run WSL 2, and no Windows 10/11 PC was available. Turning on WSL 2, the
+  restart-and-resume path, the Docker build inside WSL and the shortcuts are untested on real
+  hardware. The installer is not code-signed, so SmartScreen asks once before it runs.
 - **Cloud AI providers** (OpenAI, Gemini, Anthropic) are verified with contract tests only. Real
   model calls were verified with local models (Llama 3.2 1B and Qwen 2.5 3B through Ollama).
 - **WhisperX**: its isolated environment installs from the hashed lock file and imports
