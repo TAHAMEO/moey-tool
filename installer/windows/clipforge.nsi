@@ -10,7 +10,7 @@ SetCompressor /SOLID lzma
 ManifestDPIAware true
 
 !ifndef VERSION
-  !define VERSION "0.2.0"
+  !define VERSION "0.2.1"
 !endif
 !ifndef PAYLOAD
   !define PAYLOAD "build\payload"
@@ -21,11 +21,15 @@ ManifestDPIAware true
 
 !define APP "CLIPFORGE"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipForge"
-!define PS 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File'
+; setup.exe is a 32-bit program: Windows shows it SysWOW64 (32-bit programs only, no wsl.exe) when it
+; asks for System32. "Sysnative" is how a 32-bit program reaches the real, 64-bit System32.
+!define SYSNATIVE "$WINDIR\Sysnative"
+!define PS '"${SYSNATIVE}\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File'
 
 Name "${APP}"
 OutFile "${OUTFILE}"
 InstallDir "$LOCALAPPDATA\ClipForge"
+InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipForge" "InstallLocation"  ; updates go to the same folder
 RequestExecutionLevel admin   ; turning on WSL 2 needs administrator rights once
 ShowInstDetails show
 ShowUninstDetails show
@@ -154,7 +158,9 @@ FunctionEnd
 Section "CLIPFORGE" SecMain
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  CopyFiles /SILENT "$EXEPATH" "$INSTDIR\setup.exe"
+  ${If} "$EXEPATH" != "$INSTDIR\setup.exe"  ; after a restart, setup runs from there itself
+    CopyFiles /SILENT "$EXEPATH" "$INSTDIR\setup.exe"
+  ${EndIf}
   ; Remember the choices so a restart (or an update) continues with the same ones.
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
@@ -184,8 +190,9 @@ Section "CLIPFORGE" SecMain
   !insertmacro Step "models" "Step 6 of 7: downloading the speech model (1.8 GB)"
 
   ${If} $Restart == "1"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\RunOnce" "ClipForgeSetup" '"$INSTDIR\setup.exe" /resume'
-    MessageBox MB_YESNO|MB_ICONINFORMATION "Windows needs to restart to finish turning on WSL 2.$\r$\n$\r$\nSetup continues automatically after you sign in again. Restart now?" IDNO +2
+    ; install.ps1 has arranged for setup to continue after the next sign-in.
+    SetErrorLevel 3010
+    MessageBox MB_YESNO|MB_ICONINFORMATION "Windows needs to restart to finish turning on WSL 2.$\r$\n$\r$\nSetup continues automatically after you sign in again (if it doesn't, run setup again). Restart now?" /SD IDNO IDNO +2
       Reboot
     DetailPrint "Restart Windows to continue; setup resumes after you sign in."
     Return
@@ -210,7 +217,7 @@ Section "CLIPFORGE" SecMain
 
   !insertmacro Step "start" "Step 7 of 7: starting CLIPFORGE"
   ${If} $Failed == "1"
-    MessageBox MB_ICONSTOP "Setup could not finish. The details are listed above and saved in $INSTDIR\install.log.$\r$\n$\r$\nRunning setup again continues where it stopped."
+    MessageBox MB_ICONSTOP "Setup could not finish. The details are listed above and saved in $INSTDIR\install.log.$\r$\n$\r$\nRunning setup again continues where it stopped." /SD IDOK
     SetDetailsView show
     Abort
   ${EndIf}
@@ -220,16 +227,16 @@ Section "CLIPFORGE" SecMain
 SectionEnd
 
 Function OpenClipForge
-  Exec 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" open'
+  Exec '"${SYSNATIVE}\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" open'
 FunctionEnd
 
 Section "Uninstall"
   DetailPrint "Stopping ${APP}…"
   nsExec::ExecToLog '${PS} "$INSTDIR\app\installer\windows\scripts\clipforge.ps1" stop -NoWindow'
   Pop $0
-  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete everything ${APP} stored — your projects, clips, settings and connected accounts?$\r$\n$\r$\nChoose No to keep them for a later re-install. Your Videos\ClipForge folder is never deleted." IDNO keep
+  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete everything ${APP} stored — your projects, clips, settings and connected accounts?$\r$\n$\r$\nChoose No to keep them for a later re-install. Your Videos\ClipForge folder is never deleted." /SD IDNO IDNO keep
     DetailPrint "Deleting CLIPFORGE's Linux environment and data…"
-    nsExec::ExecToLog 'wsl.exe --unregister ClipForge'
+    nsExec::ExecToLog '"${SYSNATIVE}\wsl.exe" --unregister ClipForge'
     Pop $0
     RMDir /r "$INSTDIR\wsl"
   keep:
@@ -243,5 +250,7 @@ Section "Uninstall"
   Delete "$INSTDIR\Uninstall.exe"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\RunOnce" "ClipForgeSetup"
+  nsExec::Exec '"${SYSNATIVE}\schtasks.exe" /Delete /TN "CLIPFORGE setup" /F'  ; continue-after-restart task, if one is left
+  Pop $0
   RMDir "$INSTDIR"
 SectionEnd

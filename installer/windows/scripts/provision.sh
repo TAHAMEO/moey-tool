@@ -72,11 +72,15 @@ CONF
       sed -i "s|^CLIPFORGE_MASTER_KEY=.*|CLIPFORGE_MASTER_KEY=$(secret)|" .env
     fi
     # Your Windows folder Videos\ClipForge is the inbox for watched folders.
-    sed -i "s|^CLIPFORGE_INBOX_HOST=.*|CLIPFORGE_INBOX_HOST=${INBOX}|" .env
-    sed -i "s|^CLIPFORGE_INBOX_DISPLAY=.*|CLIPFORGE_INBOX_DISPLAY=${DISPLAY_PATH//\\/\\\\}|" .env
-    grep -q '^CLIPFORGE_INBOX_HOST=' .env || echo "CLIPFORGE_INBOX_HOST=${INBOX}" >> .env
+    set_env() {  # set_env KEY VALUE: folder names may contain \ & | ' and spaces; all are kept as they are
+      local escaped
+      escaped="$(printf '%s' "$2" | sed -e 's/[\\&|]/\\&/g')"
+      if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=${escaped}|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi
+    }
+    set_env CLIPFORGE_INBOX_HOST "$INBOX"
+    set_env CLIPFORGE_INBOX_DISPLAY "$DISPLAY_PATH"
     mkdir -p "$INBOX" 2>/dev/null || true
-    say "Building CLIPFORGE (the first time downloads about 3 GB and takes 10–30 minutes)"
+    say "Building CLIPFORGE (the first time downloads about 3 GB and takes 10-30 minutes)"
     ./scripts/install.sh --skip-speech-model
     ;;
 

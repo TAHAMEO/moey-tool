@@ -20,10 +20,19 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet("preflight", "wsl", "distro", "system", "app", "models", "start", "all")]
+  [ValidateSet("check", "preflight", "wsl", "distro", "system", "app", "models", "start", "all")]
   [string]$Step = "all",
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "ClipForge")
 )
+
+# setup.exe is a 32-bit program, and so is the PowerShell it starts. On 64-bit Windows a 32-bit
+# process is shown C:\Windows\SysWOW64 when it asks for System32 - and wsl.exe exists only in the
+# real System32. So always continue in 64-bit PowerShell (the "Sysnative" path reaches it).
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+  $native = Join-Path $env:WINDIR "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  & $native -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Step $Step -InstallDir $InstallDir
+  exit $LASTEXITCODE
+}
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -69,22 +78,69 @@ function ConvertTo-WslPath([string]$WindowsPath) {
 
 function Invoke-Native([string]$File, [string[]]$Arguments) {
   # Streams the program's output line by line into the installer window and the log.
-  & $File @Arguments 2>&1 | ForEach-Object {
-    $text = ("$_" -replace "`0", "").TrimEnd()
-    if ($text) { Say "   $text" }
+  # Windows PowerShell 5.1 turns every line a program writes to stderr into an error record; with
+  # "Stop" the first one (Docker's build progress, for example) would abort setup. Not here.
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $File @Arguments 2>&1 | ForEach-Object {
+      $text = ("$_" -replace "`0", "").TrimEnd()
+      if ($text) { Say "   $text" }
+    }
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previous
   }
-  return $LASTEXITCODE
+}
+
+function Invoke-Quiet([string]$File, [string[]]$Arguments) {
+  # Runs a program for its exit code and output lines only (nothing is shown).
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $lines = & $File @Arguments 2>$null
+    return @{ Code = $LASTEXITCODE; Lines = @($lines | ForEach-Object { ("$_" -replace "`0", "").Trim() }) }
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
+function Get-WslPath {
+  # The real System32 copy (inbox launcher), then the Store/MSI install, then anything on PATH.
+  $candidates = @()
+  if ($env:WINDIR) { $candidates += Join-Path $env:WINDIR "System32\wsl.exe" }
+  $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+  if ($programFiles) { $candidates += Join-Path $programFiles "WSL\wsl.exe" }
+  foreach ($candidate in $candidates) { if (Test-Path -LiteralPath $candidate) { return $candidate } }
+  $command = Get-Command "wsl.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($command) { return $command.Source }
+  return $null
+}
+
+function Get-Wsl {
+  $wsl = Get-WslPath
+  if (-not $wsl) { Stop-Install "WSL is not installed yet. Restart Windows, then run CLIPFORGE setup again." }
+  return $wsl
+}
+
+function Invoke-Wsl([string[]]$Arguments) {
+  $wsl = Get-WslPath
+  if (-not $wsl) { return 9009 }  # like "command not found"
+  return Invoke-Native $wsl $Arguments
 }
 
 function Test-DistroExists {
-  $names = & wsl.exe --list --quiet 2>$null
-  if ($LASTEXITCODE -ne 0) { return $false }
-  foreach ($name in $names) { if ((("$name" -replace "`0", "").Trim()) -eq $Distro) { return $true } }
-  return $false
+  $wsl = Get-WslPath
+  if (-not $wsl) { return $false }
+  $result = Invoke-Quiet $wsl @("--list", "--quiet")
+  if ($result.Code -ne 0) { return $false }
+  return ($result.Lines -contains $Distro)
 }
 
 function Invoke-InDistro([string[]]$Arguments) {
-  return Invoke-Native "wsl.exe" (@("--distribution", $Distro, "--user", "root", "--") + $Arguments)
+  # --exec hands every argument to Linux exactly as given; "--" would let a shell reinterpret
+  # characters such as \ ' $ in Windows folder names.
+  return Invoke-Native (Get-Wsl) (@("--distribution", $Distro, "--user", "root", "--exec") + $Arguments)
 }
 
 function Get-File([string]$Url, [string]$Destination, [string]$Label) {
@@ -122,9 +178,60 @@ function Get-File([string]$Url, [string]$Destination, [string]$Label) {
   }
 }
 
+$ResumeTask = "CLIPFORGE setup"
+$RunOnceKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+
+function Register-Resume {
+  # setup.exe needs administrator rights, and Windows may skip a program in the RunOnce key that
+  # asks for them at sign-in. A sign-in task with the highest privileges starts it without asking.
+  $setup = Join-Path $InstallDir "setup.exe"
+  if (-not (Test-Path -LiteralPath $setup)) { Say "   After the restart, run CLIPFORGE setup again."; return }
+  try {
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $action = New-ScheduledTaskAction -Execute $setup -Argument "/resume"
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $trigger.Delay = "PT20S"
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 5
+    Register-ScheduledTask -TaskName $ResumeTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Say "   Setup will continue by itself after you sign in again"
+  } catch {
+    Say "   Note: could not create the sign-in task ($($_.Exception.Message)); using RunOnce instead"
+    try { Set-ItemProperty -Path $RunOnceKey -Name "ClipForgeSetup" -Value "`"$setup`" /resume" }
+    catch { Say "   After the restart, run CLIPFORGE setup again." }
+  }
+}
+
+function Unregister-Resume {
+  # Nothing to remove is the usual case; no error here may stop setup.
+  try { Unregister-ScheduledTask -TaskName $ResumeTask -Confirm:$false -ErrorAction Stop } catch { }
+  try { Remove-ItemProperty -Path $RunOnceKey -Name "ClipForgeSetup" -ErrorAction Stop } catch { }
+}
+
+function Request-Restart([string]$Message) {
+  Set-Content -Path (Join-Path $InstallDir "wsl-restart-requested") -Value (Get-Date -Format o)
+  Register-Resume
+  Say $Message
+  exit $RebootRequired
+}
+
 # --------------------------------------------------------------------------- steps
+function Step-Check {
+  # How setup runs on this PC (also used by the automated Windows tests).
+  Say "Checking how setup runs on this PC"
+  Say ("   Windows {0}, PowerShell {1}, 64-bit process: {2}" -f [Environment]::OSVersion.Version, $PSVersionTable.PSVersion,
+       [Environment]::Is64BitProcess)
+  if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { Stop-Install "Setup is still running as 32-bit PowerShell." }
+  $wsl = Get-WslPath
+  if ($wsl) { Say "   wsl.exe: $wsl" } else { Say "   wsl.exe: not found yet (the WSL step installs it)" }
+  $code = Invoke-Native "cmd.exe" @("/c", "echo output-check-stdout & echo output-check-stderr 1>&2 & exit /b 3")
+  if ($code -ne 3) { Stop-Install "Program output check failed (exit code $code instead of 3)." }
+  Say "   Program output check OK"
+}
+
 function Step-Preflight {
   Say "Checking this PC"
+  Unregister-Resume  # this run is the one a restart was waiting for
   $os = [Environment]::OSVersion.Version
   if ($os.Major -lt 10 -or $os.Build -lt 19041) {
     Stop-Install "CLIPFORGE needs Windows 10 version 2004 (build 19041) or later, or Windows 11. This PC has build $($os.Build). Install the Windows updates, then run setup again."
@@ -144,12 +251,17 @@ function Step-Preflight {
     Say "   Warning: hardware virtualization looks switched off. If WSL 2 fails to start, turn on 'Intel VT-x' / 'AMD-V' (SVM) in the PC's BIOS/UEFI settings."
   }
   Say "   Windows build $($os.Build), $memoryGb GB memory, $freeGb GB free - OK"
+  $wsl = Get-WslPath
+  $wslText = if ($wsl) { $wsl } else { "not installed yet" }
+  Say ("   Setup runs in PowerShell {0} ({1}); wsl.exe: {2}" -f $PSVersionTable.PSVersion,
+       $(if ([Environment]::Is64BitProcess) { "64-bit" } else { "32-bit" }), $wslText)
 }
 
 function Test-ModernWsl {
   # The current WSL (from the Store or its MSI) answers --version; the old built-in one of early Windows 10 doesn't.
-  & wsl.exe --version *> $null
-  return $LASTEXITCODE -eq 0
+  $wsl = Get-WslPath
+  if (-not $wsl) { return $false }
+  return (Invoke-Quiet $wsl @("--version")).Code -eq 0
 }
 
 function Install-WslMsi {
@@ -180,25 +292,27 @@ function Step-Wsl {
   $marker = Join-Path $InstallDir "wsl-restart-requested"
   $restart = $false
   foreach ($feature in @("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")) {
-    $state = (Get-WindowsOptionalFeature -Online -FeatureName $feature).State
-    if ($state -ne "Enabled") {
-      Say "   Turning on the Windows feature $feature"
-      $result = Enable-WindowsOptionalFeature -Online -FeatureName $feature -All -NoRestart -WarningAction SilentlyContinue
-      if ($result.RestartNeeded) { $restart = $true }
+    $state = "$((Get-WindowsOptionalFeature -Online -FeatureName $feature).State)"
+    if ($state -eq "Enabled") { continue }
+    if ($state -eq "EnablePending") {
+      Say "   The Windows feature $feature is turned on and waits for a restart"
+      $restart = $true
+      continue
     }
+    Say "   Turning on the Windows feature $feature"
+    $result = Enable-WindowsOptionalFeature -Online -FeatureName $feature -All -NoRestart -WarningAction SilentlyContinue
+    if ($result.RestartNeeded) { $restart = $true }
   }
   if (-not (Test-ModernWsl)) {
     Say "   Installing the current WSL release"
-    $code = Invoke-Native "wsl.exe" @("--install", "--no-distribution", "--web-download")
-    if ($code -ne 0 -or -not (Test-ModernWsl)) { $code = Invoke-Native "wsl.exe" @("--update", "--web-download") }
+    [void](Invoke-Wsl @("--install", "--no-distribution", "--web-download"))
+    if (-not (Test-ModernWsl)) { [void](Invoke-Wsl @("--update", "--web-download")) }
     if (-not (Test-ModernWsl)) { [void](Install-WslMsi) }
   } else {
-    Invoke-Native "wsl.exe" @("--update", "--web-download") | Out-Null
+    [void](Invoke-Wsl @("--update", "--web-download"))
   }
   if ($restart) {
-    Set-Content -Path $marker -Value (Get-Date -Format o)
-    Say "Windows needs to restart to finish turning on WSL 2. Setup continues automatically after you sign in again."
-    exit $RebootRequired
+    Request-Restart "Windows needs to restart to finish turning on WSL 2. Setup continues automatically after you sign in again."
   }
   if (-not (Test-ModernWsl)) {
     if (Test-Path $marker) {
@@ -207,12 +321,10 @@ function Step-Wsl {
       Stop-Install ("WSL could not be installed automatically. Install 'Windows Subsystem for Linux' from the Microsoft Store " +
                     "(or run Windows Update), restart, then run CLIPFORGE setup again.")
     }
-    Set-Content -Path $marker -Value (Get-Date -Format o)
-    Say "WSL is not ready yet; a restart usually finishes its installation."
-    exit $RebootRequired
+    Request-Restart "WSL is not ready yet; a restart usually finishes its installation."
   }
   Remove-Item $marker -Force -ErrorAction SilentlyContinue
-  Invoke-Native "wsl.exe" @("--set-default-version", "2") | Out-Null
+  [void](Invoke-Wsl @("--set-default-version", "2"))
   Say "   WSL 2 is ready"
 }
 
@@ -233,7 +345,7 @@ function Step-Distro {
   Say "Creating the ClipForge Linux environment"
   $target = Join-Path $InstallDir "wsl"
   New-Item -ItemType Directory -Force -Path $target | Out-Null
-  $code = Invoke-Native "wsl.exe" @("--import", $Distro, $target, $tarball, "--version", "2")
+  $code = Invoke-Native (Get-Wsl) @("--import", $Distro, $target, $tarball, "--version", "2")
   Remove-Item $tarball -Force -ErrorAction SilentlyContinue
   if ($code -ne 0) { Stop-Install "WSL could not create the Linux environment (wsl --import exit code $code). If virtualization is off in the BIOS/UEFI, turn it on." }
   Configure-WslMemory
@@ -259,7 +371,7 @@ function Step-System {
   $code = Invoke-InDistro @("bash", $script, "system")
   if ($code -ne 0) { Stop-Install "Installing Docker Engine failed (exit code $code)." }
   # Restart the environment so systemd (and with it Docker) starts automatically from now on.
-  & wsl.exe --terminate $Distro *> $null
+  [void](Invoke-Quiet (Get-Wsl) @("--terminate", $Distro))
 }
 
 function Step-App {
@@ -289,15 +401,16 @@ function Step-Models {
 
 function Step-Start {
   $launcher = Join-Path $AppDir "installer\windows\scripts\clipforge.ps1"
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher start -NoWindow
-  if ($LASTEXITCODE -ne 0) { Stop-Install "CLIPFORGE was installed but did not start. Use the CLIPFORGE shortcut to try again." }
+  $code = Invoke-Native (Join-Path $PSHOME "powershell.exe") @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $launcher, "start", "-NoWindow")
+  if ($code -ne 0) { Stop-Install "CLIPFORGE was installed but did not start. Use the CLIPFORGE shortcut to try again." }
   Say "CLIPFORGE is running at http://localhost:3000"
 }
 
 $steps = [ordered]@{ preflight = { Step-Preflight }; wsl = { Step-Wsl }; distro = { Step-Distro }; system = { Step-System };
                      app = { Step-App }; models = { Step-Models }; start = { Step-Start } }
 try {
-  if ($Step -eq "all") { foreach ($name in $steps.Keys) { & $steps[$name] } }
+  if ($Step -eq "check") { Step-Check }
+  elseif ($Step -eq "all") { foreach ($name in $steps.Keys) { & $steps[$name] } }
   else { & $steps[$Step] }
 } catch {
   Stop-Install $_.Exception.Message

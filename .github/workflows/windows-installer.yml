@@ -1,5 +1,6 @@
-# Builds the Windows installer and checks its scripts. GitHub's Windows runners can't run WSL 2
-# (no nested virtualization), so the full install is tested on a real PC; this checks everything else.
+# Builds the Windows installer and tests it on real Windows machines. GitHub's Windows runners can't
+# run WSL 2 itself (no nested virtualization), so setup.exe is run silently up to the point where
+# Windows has to restart to finish turning WSL 2 on; the rest of the install is tested on a real PC.
 name: Windows installer
 
 on:
@@ -47,3 +48,80 @@ jobs:
       - name: Preflight checks on a real Windows machine
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step preflight -InstallDir "$env:RUNNER_TEMP\ClipForge"
+      - name: Started from 32-bit PowerShell (as setup.exe does), the scripts continue as 64-bit
+        shell: powershell
+        run: |
+          foreach ($ps in @("$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe", "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe")) {
+            "== $ps"
+            $out = & $ps -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step check -InstallDir "$env:RUNNER_TEMP\check" | Out-String
+            $code = $LASTEXITCODE
+            $out
+            if ($code -ne 0 -or $out -notmatch "64-bit process: True" -or $out -notmatch "Program output check OK") { "FAILED (exit code $code)"; exit 1 }
+          }
+
+  windows-setup:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ClipForge-Setup
+          path: setup
+      - name: setup.exe, silently, until Windows has to restart for WSL 2
+        shell: powershell
+        run: |
+          $drive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free } | Sort-Object Free -Descending | Select-Object -First 1
+          $dir = Join-Path $drive.Root "cf-setup-test"
+          "Installing into $dir"
+          "WSL features before: " + ((Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform | ForEach-Object { "$($_.FeatureName)=$($_.State)" }) -join ", ")
+          $exe = (Get-ChildItem setup\ClipForge-Setup-*.exe | Select-Object -First 1).FullName
+
+          function Invoke-Setup([string]$Path, [string[]]$Arguments) {
+            $started = Get-Date
+            $p = Start-Process -FilePath $Path -ArgumentList $Arguments -PassThru
+            $null = $p.Handle  # keeps the exit code readable
+            if (-not $p.WaitForExit(40 * 60 * 1000)) { Stop-Process -Id $p.Id -Force; throw "setup.exe did not finish within 40 minutes" }
+            Write-Host "setup.exe $($Arguments -join ' ') -> exit code $($p.ExitCode) after $([int]((Get-Date) - $started).TotalSeconds) s"
+            return [int]$p.ExitCode
+          }
+          function Test-Run([int]$Code, [string]$Label) {
+            $log = Get-Content -Raw (Join-Path $dir "install.log")
+            "----- install.log -----"; $log; "-----------------------"
+            $problems = @()
+            if ($log -match "is not recognized") { $problems += "a program was not found" }
+            if ($log -notmatch "Setup runs in PowerShell 5\.1[^\r\n]*\(64-bit\)") { $problems += "setup's steps did not run in 64-bit Windows PowerShell 5.1" }
+            if ($Code -eq 3010) {
+              $task = Get-ScheduledTask -TaskName "CLIPFORGE setup" -ErrorAction SilentlyContinue
+              if (-not $task) { $problems += "no task to continue setup after the restart" }
+              else {
+                "Continue-after-restart task: $($task.Actions[0].Execute) $($task.Actions[0].Arguments) (run level $($task.Principal.RunLevel), trigger $($task.Triggers[0].CimClass.CimClassName) for $($task.Triggers[0].UserId))"
+                if ($task.Actions[0].Execute -ne (Join-Path $dir "setup.exe") -or $task.Actions[0].Arguments -ne "/resume") { $problems += "the task does not run setup.exe /resume" }
+                if ("$($task.Principal.RunLevel)" -ne "Highest") { $problems += "the task does not run as administrator" }
+                if ($task.Settings.DisallowStartIfOnBatteries) { $problems += "the task would not start on battery" }
+              }
+              if ($log -notmatch "restart") { $problems += "the log does not say a restart is needed" }
+            } elseif ($Code -eq 2 -and $log -match "WSL 2 is ready") {
+              "WSL was already on here; this runner can't run WSL 2 itself, so setup stops at creating the Linux environment."
+              if ($log -notmatch "wsl --import") { $problems += "setup stopped before creating the Linux environment" }
+            } else {
+              $problems += "unexpected exit code $Code"
+            }
+            if ($problems) { $problems | ForEach-Object { "FAILED ($Label): $_" }; exit 1 }
+            "OK ($Label)"
+          }
+
+          $code = Invoke-Setup $exe @("/S", "/D=$dir")
+          Test-Run $code "first run"
+          if ($code -eq 3010) {
+            # What the sign-in task does after the restart (without the restart: WSL still waits for it).
+            $code = Invoke-Setup (Join-Path $dir "setup.exe") @("/S", "/resume")
+            Test-Run $code "continued run"
+            $runs = ([regex]::Matches((Get-Content -Raw (Join-Path $dir "install.log")), "Checking this PC")).Count
+            if ($runs -ne 2) { "FAILED: expected two runs in install.log, found $runs"; exit 1 }
+          }
+          "WSL features after: " + ((Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform | ForEach-Object { "$($_.FeatureName)=$($_.State)" }) -join ", ")

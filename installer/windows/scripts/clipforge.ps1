@@ -14,6 +14,15 @@ param(
   [switch]$NoWindow  # print progress instead of showing a window (used by the installer)
 )
 
+# A 32-bit PowerShell (as started by setup.exe) can't see wsl.exe: continue in 64-bit PowerShell.
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+  $native = Join-Path $env:WINDIR "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  $forward = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, $Action)
+  if ($NoWindow) { $forward += "-NoWindow" }
+  & $native @forward
+  exit $LASTEXITCODE
+}
+
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
@@ -34,10 +43,35 @@ function Show-Message([string]$Text, [string]$Icon = "Information") {
   [void][System.Windows.Forms.MessageBox]::Show($Text, "CLIPFORGE", "OK", $Icon)
 }
 
+function Get-WslPath {
+  $candidates = @()
+  if ($env:WINDIR) { $candidates += Join-Path $env:WINDIR "System32\wsl.exe" }
+  $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+  if ($programFiles) { $candidates += Join-Path $programFiles "WSL\wsl.exe" }
+  foreach ($candidate in $candidates) { if (Test-Path -LiteralPath $candidate) { return $candidate } }
+  $command = Get-Command "wsl.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($command) { return $command.Source }
+  return $null
+}
+
+$Wsl = Get-WslPath
+
+function Invoke-Wsl([string[]]$Arguments) {
+  # Windows PowerShell 5.1 turns a program's stderr lines into errors; never let them abort this script.
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $lines = & $Wsl @Arguments 2>&1
+    return @{ Code = $LASTEXITCODE; Lines = @($lines | ForEach-Object { ("$_" -replace "`0", "").Trim() }) }
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
 function Test-Installed {
-  $names = & wsl.exe --list --quiet 2>$null
-  foreach ($name in $names) { if ((("$name" -replace "`0", "").Trim()) -eq $Distro) { return $true } }
-  return $false
+  if (-not $Wsl) { return $false }
+  $result = Invoke-Wsl @("--list", "--quiet")
+  return ($result.Code -eq 0 -and $result.Lines -contains $Distro)
 }
 
 function Test-Ready {
@@ -52,12 +86,12 @@ function Get-KeepAlive {
 function Start-ClipForge {
   # WSL stops a Linux environment once nothing uses it; this hidden process keeps CLIPFORGE's running.
   if (-not (Get-KeepAlive)) {
-    Start-Process -FilePath "wsl.exe" -WindowStyle Hidden -ArgumentList @(
-      "--distribution", $Distro, "--user", "root", "--", "bash", "-c", "exec -a clipforge-keepalive sleep infinity")
+    Start-Process -FilePath $Wsl -WindowStyle Hidden -ArgumentList @(
+      "--distribution", $Distro, "--user", "root", "--exec", "bash", "-c", "`"exec -a clipforge-keepalive sleep infinity`"")
     Write-Log "Started the Linux environment"
   }
-  return Start-Process -FilePath "wsl.exe" -WindowStyle Hidden -PassThru -ArgumentList @(
-    "--distribution", $Distro, "--user", "root", "--", "bash", $Provision, "start")
+  return Start-Process -FilePath $Wsl -WindowStyle Hidden -PassThru -ArgumentList @(
+    "--distribution", $Distro, "--user", "root", "--exec", "bash", $Provision, "start")
 }
 
 function Wait-Ready([int]$Minutes) {
@@ -108,14 +142,14 @@ if (-not (Test-Installed)) {
 
 switch ($Action) {
   "status" {
-    & wsl.exe --distribution $Distro --user root -- bash $Provision status
+    (Invoke-Wsl @("--distribution", $Distro, "--user", "root", "--exec", "bash", $Provision, "status")).Lines | ForEach-Object { Write-Output $_ }
     if (Test-Ready) { Write-Output "CLIPFORGE is running at $Url" } else { Write-Output "CLIPFORGE is not answering at $Url" }
   }
   "stop" {
     Write-Log "Stopping"
-    & wsl.exe --distribution $Distro --user root -- bash $Provision stop 2>&1 | Out-Null
+    [void](Invoke-Wsl @("--distribution", $Distro, "--user", "root", "--exec", "bash", $Provision, "stop"))
     Get-KeepAlive | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    & wsl.exe --terminate $Distro 2>&1 | Out-Null
+    [void](Invoke-Wsl @("--terminate", $Distro))
     Show-Message "CLIPFORGE is stopped. Scheduled Instagram posts wait until you start it again; YouTube posts handed to YouTube still go out."
   }
   default {
