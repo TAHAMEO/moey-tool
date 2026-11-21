@@ -89,7 +89,8 @@ CONF
     wait_for_docker
     say "Downloading the vision models (about 15 MB, verified)"
     docker compose exec -T worker clipforge download-models
-    say "Downloading the speech recognition model (about 1.8 GB, every file verified)"
+    if [[ "${2:-}" == "vision-only" ]]; then say "Speech recognition model skipped (download it later from Settings)"; exit 0; fi
+    say "Downloading the speech recognition model (about 1.8 GB, every file verified; progress below)"
     docker compose exec -T worker clipforge download-models --vosk
     ;;
 

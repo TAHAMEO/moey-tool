@@ -523,7 +523,9 @@ that folder is then turned into clips automatically, with the settings you chose
 }
 
 function Step-Models {
-  $code = Invoke-InDistro @("bash", "/opt/clipforge/installer/windows/scripts/provision.sh", "models")
+  $arguments = @("bash", "/opt/clipforge/installer/windows/scripts/provision.sh", "models")
+  if ($env:CLIPFORGE_SKIP_SPEECH_MODEL -eq "1") { $arguments += "vision-only" }  # automated tests only
+  $code = Invoke-InDistro $arguments
   if ($code -ne 0) {
     Say "   The models could not be downloaded right now. CLIPFORGE works without them except for speech recognition;"
     Say "   Settings shows how to retry. (exit code $code)"

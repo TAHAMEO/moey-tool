@@ -173,6 +173,32 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
         archive.extractall(dest)
 
 
+class _Progress:
+    """Logs a long download's progress every 5 % (or every 30 s): size, speed and time left."""
+
+    def __init__(self, label: str, total: int) -> None:
+        import time
+
+        self.label, self.total, self._time = label, total, time.monotonic
+        self.started = self.last_log = self._time()
+        self.next_percent = 5
+
+    def update(self, done: int) -> None:
+        now = self._time()
+        percent = int(100 * done / self.total) if self.total else 0
+        if percent < self.next_percent and now - self.last_log < 30:
+            return
+        self.last_log = now
+        self.next_percent = percent + 5
+        speed = done / max(now - self.started, 0.001)
+        if self.total:
+            left = (self.total - done) / max(speed, 1)
+            log.info("%s: %d%% (%d of %d MB, %.1f MB/s, about %d min left)", self.label, percent,
+                     done >> 20, self.total >> 20, speed / (1 << 20), int(left // 60) + 1)
+        else:
+            log.info("%s: %d MB (%.1f MB/s)", self.label, done >> 20, speed / (1 << 20))
+
+
 def install_vosk(source: str | None = None) -> Path:
     """Install the English Vosk model, verified file-by-file against the pinned manifest.
 
@@ -199,12 +225,15 @@ def install_vosk(source: str | None = None) -> Path:
                 try:
                     with httpx.stream("GET", VOSK_URL, timeout=httpx.Timeout(120, connect=20), follow_redirects=True) as response:
                         response.raise_for_status()
+                        total = int(response.headers.get("content-length") or 0)
+                        progress = _Progress("Speech model", total)
                         with open(zip_path, "wb") as handle:
                             for chunk in response.iter_bytes(1 << 20):
                                 size += len(chunk)
                                 if size > _VOSK_MAX_ZIP:
                                     raise ModelUnavailable("Download is larger than expected; aborted")
                                 handle.write(chunk)
+                                progress.update(size)
                 except httpx.HTTPError as exc:
                     raise ModelUnavailable(f"Could not download {VOSK_URL}: {exc}") from exc
             _safe_extract(zip_path, staging / "x")

@@ -1,6 +1,7 @@
-# Builds the Windows installer and tests it on real Windows machines. GitHub's Windows runners can't
-# run WSL 2 itself (no nested virtualization), so setup.exe is run silently up to the point where
-# Windows has to restart to finish turning WSL 2 on; the rest of the install is tested on a real PC.
+# Builds the Windows installer and runs the real setup.exe silently on Windows Server 2022 and 2025:
+# a full installation (WSL 2, Ubuntu, Docker Engine, the CLIPFORGE build, models except the 1.8 GB
+# speech model) and then checks that CLIPFORGE answers. If a machine first needs a restart for WSL 2,
+# the test checks the continue-after-restart task and the resumed run instead.
 name: Windows installer
 
 on:
@@ -78,14 +79,16 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 50
+    timeout-minutes: 60
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: ClipForge-Setup
           path: setup
-      - name: setup.exe, silently, until Windows has to restart for WSL 2
+      - name: setup.exe, silently - the full installation
         shell: powershell
+        env:
+          CLIPFORGE_SKIP_SPEECH_MODEL: "1"   # 1.8 GB from a slow server; everything else is real
         run: |
           $drive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free } | Sort-Object Free -Descending | Select-Object -First 1
           $dir = Join-Path $drive.Root "cf-setup-test"
@@ -101,8 +104,8 @@ jobs:
             $started = Get-Date
             $p = Start-Process -FilePath $Path -ArgumentList $Arguments -PassThru
             $null = $p.Handle  # keeps the exit code readable
-            if (-not $p.WaitForExit(25 * 60 * 1000)) {
-              Write-Host "setup.exe did not finish within 25 minutes. Still running:"
+            if (-not $p.WaitForExit(45 * 60 * 1000)) {
+              Write-Host "setup.exe did not finish within 45 minutes. Still running:"
               Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(setup|ClipForge-Setup.*|powershell|wsl|wslservice|msiexec|ping|findstr)\.exe$' } |
                 ForEach-Object { Write-Host "  $($_.ProcessId) $($_.Name): $($_.CommandLine)" }
               $log = Join-Path $dir "install.log"
@@ -129,9 +132,20 @@ jobs:
                 if ($task.Settings.DisallowStartIfOnBatteries) { $problems += "the task would not start on battery" }
               }
               if ($log -notmatch "restart") { $problems += "the log does not say a restart is needed" }
-            } elseif ($Code -eq 2 -and $log -match "WSL 2 is ready") {
-              "WSL was already on here; this runner can't run WSL 2 itself, so setup stops at creating the Linux environment."
-              if ($log -notmatch "wsl --import") { $problems += "setup stopped before creating the Linux environment" }
+            } elseif ($Code -eq 0) {
+              foreach ($line in @("WSL 2 is ready", "Creating the ClipForge Linux environment", "Docker", "Building CLIPFORGE", "CLIPFORGE is running at http://localhost:3000")) {
+                if ($log -notmatch [regex]::Escape($line)) { $problems += "the log lacks: $line" }
+              }
+              try { $ready = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://localhost:3000/api/health/ready").StatusCode } catch { $ready = "$_" }
+              "http://localhost:3000/api/health/ready from Windows: $ready"
+              if ($ready -ne 200) { $problems += "CLIPFORGE does not answer on http://localhost:3000 ($ready)" }
+              $page = try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://localhost:3000/login").StatusCode } catch { "$_" }
+              "http://localhost:3000/login: $page"
+              if ($page -ne 200) { $problems += "the web app does not answer ($page)" }
+              foreach ($link in @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CLIPFORGE\CLIPFORGE.lnk", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CLIPFORGE\Stop CLIPFORGE.lnk")) {
+                if (-not (Test-Path $link)) { $problems += "missing shortcut $link" }
+              }
+              if (Get-ScheduledTask -TaskName "CLIPFORGE setup" -ErrorAction SilentlyContinue) { $problems += "the continue-after-restart task was left behind" }
             } else {
               $problems += "unexpected exit code $Code"
             }
