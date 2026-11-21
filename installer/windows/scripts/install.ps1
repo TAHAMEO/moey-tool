@@ -370,18 +370,28 @@ function Step-Wsl {
     $result = Enable-WindowsOptionalFeature -Online -FeatureName $feature -All -NoRestart -WarningAction SilentlyContinue
     if ($result.RestartNeeded) { $restart = $true }
   }
-  if (-not (Test-ModernWsl)) {
-    Say "   Installing the current WSL release"
-    [void](Invoke-Wsl @("--install", "--no-distribution", "--web-download"))
-    if (-not (Test-ModernWsl)) { [void](Invoke-Wsl @("--update", "--web-download")) }
-    if (-not (Test-ModernWsl)) { [void](Install-WslMsi) }
+  $modern = Test-ModernWsl
+  if (-not $modern) {
+    Say "   Installing the current WSL release (a few minutes)"
+    $code = Invoke-Wsl @("--install", "--no-distribution", "--web-download") 900
+    $modern = Test-ModernWsl
+    # A command that ran out of time won't do better a second time: go straight to the package.
+    if (-not $modern -and $code -ne 1460) {
+      [void](Invoke-Wsl @("--update", "--web-download") 900)
+      $modern = Test-ModernWsl
+    }
+    if (-not $modern) {
+      Say "   Downloading the WSL package from Microsoft's GitHub releases"
+      [void](Install-WslMsi)
+      $modern = Test-ModernWsl
+    }
   } else {
-    [void](Invoke-Wsl @("--update", "--web-download"))
+    [void](Invoke-Wsl @("--update", "--web-download") 900)
   }
   if ($restart) {
     Request-Restart "Windows needs to restart to finish turning on WSL 2. Setup continues automatically after you sign in again."
   }
-  if (-not (Test-ModernWsl)) {
+  if (-not $modern) {
     if (Test-Path $marker) {
       # Already restarted once for this: don't ask again in a loop, explain what to do instead.
       Remove-Item $marker -Force
