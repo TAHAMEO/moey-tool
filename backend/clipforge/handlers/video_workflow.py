@@ -327,10 +327,14 @@ def package_node(state: VideoState, config) -> VideoState:
                     package.cover_asset_id = vertical.thumbnail_asset_id
                 package.status = "ready"
                 db.flush()
+                hook = (clip.shorts or {}).get("hook") or {}
                 packages.append({"package_id": str(package.id), "platform": platform, "rank": clip.rank,
                                  "title": clip.title, "clip_id": str(clip.id),
                                  "qc_passed": bool(vertical.quality_report.get("passed")),
-                                 "review_words": len(vertical.subtitle_report.get("review_words", []))})
+                                 "review_words": len(vertical.subtitle_report.get("review_words", [])),
+                                 "hook_score": clip.hook_score, "loop_score": clip.loop_score,
+                                 "hook_held": hook.get("status") == "held",
+                                 "hook_reasons": (hook.get("after") or {}).get("reasons", [])})
         project.status = "ready"
         project.status_label = "Clips ready"
         project.analysis_level = "full_media"
@@ -390,28 +394,74 @@ def publish_gate_node(state: VideoState, config) -> VideoState:
     packages = [p for p in state.get("packages", []) if p["platform"] in allowed]
     auto = publishing.policy == "auto_publish" or bool(project.request.get("auto_publish"))
     if not packages or publishing.policy == "draft_only" or not (requested or auto):
+        if packages:
+            _record_gate(packages, "draft", ["publishing policy: drafts only" if publishing.policy == "draft_only"
+                                             else "not asked to publish"])
         return {"approved": []}
     access = state.get("access") or {}
     third_party = access.get("method") == "public_download" and not access.get("owned")
-    blocked = [p for p in packages if not p["qc_passed"] or p["review_words"] or third_party]
+    with session_scope() as db:
+        hook_gate = app_settings.get_section(db, "shorts").hook_gate
+    hook_held = [p for p in packages if hook_gate and p.get("hook_held")]
+    blocked = [p for p in packages if not p["qc_passed"] or p["review_words"] or third_party or p in hook_held]
     if auto and not blocked:
         approved, notes = _requested_schedule(state, packages, [p["package_id"] for p in packages], config)
         why = "Batch set to post automatically" if project.request.get("auto_publish") else "Auto-publish policy"
+        _record_gate(packages, "approved", [why])
         return {"approved": approved, "notes": [f"{why}: approved automatically", *notes]}
+    _record_gate(packages, "awaiting_approval", ["waiting for your approval"], held=blocked, third_party=third_party,
+                 hook_held=hook_held)
     _set_project(state["project_id"], status="awaiting_approval", label="Waiting for your approval")
     decision = await_approval({"packages": packages, "project_id": state["project_id"],
                                "schedule": _schedule_hint(state["project_id"]),
                                # Clips cut from someone else's downloaded video are never published automatically.
                                "rights": "third_party_download" if third_party else None,
-                               "flags": [{"package_id": p["package_id"], "reason": "caption words need review"
-                                          if p["review_words"] else "quality check warning" if not p["qc_passed"]
-                                          else "made from another creator's video — confirm you may republish it"}
+                               "flags": [{"package_id": p["package_id"], "reason": _flag_reason(p, third_party, hook_held)}
                                          for p in blocked]})
     approved = [pid for pid in (decision or {}).get("approved", []) if any(p["package_id"] == pid for p in packages)]
+    _record_gate([p for p in packages if p["package_id"] in approved], "approved", ["approved by you"])
+    _record_gate([p for p in packages if p["package_id"] not in approved], "not_approved", ["not approved"])
     notes: list[str] = []
     if not (decision or {}).get("publish_now"):
         approved, notes = _requested_schedule(state, packages, approved, config)
     return {"approved": approved, "notes": notes}
+
+
+def _flag_reason(package: dict, third_party: bool, hook_held: list[dict]) -> str:
+    if package in hook_held:
+        why = "; ".join(package.get("hook_reasons") or []) or "the opening is weak"
+        return f"weak first 3 seconds (hook {package.get('hook_score') or 0:.2f}): {why}"
+    if package["review_words"]:
+        return "caption words need review"
+    if not package["qc_passed"]:
+        return "quality check warning"
+    return "made from another creator's video — confirm you may republish it"
+
+
+def _record_gate(packages: list[dict], result: str, reasons: list[str], *, held: list[dict] | None = None,
+                 third_party: bool = False, hook_held: list[dict] | None = None) -> None:
+    """Store on each clip why it was published, held or left for approval (status output)."""
+    held = held or []
+    by_clip: dict[str, dict] = {}
+    for p in packages:
+        clip_id = p.get("clip_id")
+        if clip_id is None:
+            with session_scope() as db:
+                package = db.get(OutputPackage, uuid.UUID(p["package_id"]))
+                clip_id = str(package.clip_id) if package else None
+        if clip_id is None:
+            continue
+        entry = by_clip.setdefault(clip_id, {"result": result, "reasons": list(reasons), "at": utcnow().isoformat()})
+        if p in held:
+            entry["result"] = "held"
+            reason = _flag_reason(p, third_party, hook_held or [])
+            if reason not in entry["reasons"]:
+                entry["reasons"].append(reason)
+    with session_scope() as db:
+        for clip_id, entry in by_clip.items():
+            clip = db.get(Clip, uuid.UUID(clip_id))
+            if clip is not None:
+                clip.shorts = {**(clip.shorts or {}), "publish_gate_result": entry}
 
 
 def _schedule_hint(project_id: str) -> dict | None:

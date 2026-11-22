@@ -141,6 +141,18 @@ export type Clip = {
   scoring_method: string;
   renders: Render[];
   packages: Package[];
+  hook_score?: number | null;
+  loop_score?: number | null;
+  shorts?: ClipShorts;
+};
+
+export type ClipShorts = {
+  hook?: { status: "ok" | "improved" | "held"; text_hook: string | null; changes: string[];
+           before: { score: number; reasons: string[] }; after: { score: number; reasons: string[]; parts: Record<string, number> } };
+  loop?: { end: number; changes: string[]; bridge_s: number; bridged?: boolean; visual_similarity?: number | null;
+           assessment: { score: number; loopable: boolean; reasons: string[] } };
+  publish_gate_result?: { result: "approved" | "awaiting_approval" | "held" | "draft" | "not_approved"; reasons: string[]; at: string };
+  original_bounds?: [number, number];
 };
 
 export type AccessDetail = {
@@ -232,11 +244,16 @@ export type ClipSettings = {
   caption_style: "bold_pop" | "karaoke_fill" | "clean_lower" | "boxed"; burn_captions: boolean; languages: string[]; remove_silences: boolean;
   min_silence_to_cut_s: number; punch_in_zoom: boolean; loudness_lufs: number; music_volume_db: number; use_licensed_music: boolean;
 };
+export type ShortsSettings = {
+  hook_scorer: boolean; hook_reconstruct: boolean; hook_gate: boolean; hook_threshold: number; max_first_line_s: number;
+  runway_search_s: number; text_hook: boolean; text_hook_seconds: number; tension_first: boolean; loop_seam: boolean;
+  loop_threshold: number; loop_search_s: number; prefer_max_s: number; max_s: number; min_s: number;
+};
 export type BrandSettings = { accent_color: string; watermark_library_item_id: string | null; watermark_position: string; channel_name: string };
 export type RetentionSettings = { source_media_days: number; work_files_days: number; live_buffer_minutes: number; keep_renders_days: number };
 export type AllSettings = {
   ai: AISettings; publishing: PublishingSettings; sources: SourceSettings; control: { paused: boolean; emergency_stop: boolean; disabled_integrations: string[] };
-  clips: ClipSettings; brand: BrandSettings; analytics: { collection_offsets_hours: number[] }; retention: RetentionSettings; ui: { show_diagnostics: boolean };
+  clips: ClipSettings; shorts: ShortsSettings; brand: BrandSettings; analytics: { collection_offsets_hours: number[] }; retention: RetentionSettings; ui: { show_diagnostics: boolean };
 };
 
 export type SocialAccount = {

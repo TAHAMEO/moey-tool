@@ -88,6 +88,27 @@ class ClipSettings(_Section):
     use_licensed_music: bool = False
 
 
+class ShortsSettings(_Section):
+    """First-3-seconds hook and loop stages (docs/plans/SHORTS_RETENTION_PLAN.md). All off by
+    default: existing projects render and publish exactly as before until switched on."""
+
+    hook_scorer: bool = False          # score the first 0-3 s of every clip
+    hook_reconstruct: bool = False     # remove the runway, first line within 1.5 s, frame-one text hook
+    hook_gate: bool = False            # a clip whose hook stays weak is held for review, never auto-published
+    hook_threshold: float = Field(0.55, ge=0, le=1)
+    max_first_line_s: float = Field(1.5, ge=0.3, le=5)
+    runway_search_s: float = Field(8.0, ge=1, le=30)
+    text_hook: bool = True             # (with hook_reconstruct) bold 1-5 word text on frame one, middle third
+    text_hook_seconds: float = Field(1.5, ge=0.5, le=4)
+    tension_first: bool = False        # open on the clip's own question when the answer comes first
+    loop_seam: bool = False            # score/adjust the end so the replay flows; bridge when it can't
+    loop_threshold: float = Field(0.6, ge=0, le=1)
+    loop_search_s: float = Field(3.0, ge=0.5, le=10)
+    prefer_max_s: float = Field(30, ge=10, le=90)
+    max_s: float = Field(58, ge=15, le=180)
+    min_s: float = Field(12, ge=3, le=60)
+
+
 class BrandSettings(_Section):
     accent_color: str = Field("#FFD400", pattern=r"^#[0-9A-Fa-f]{6}$")
     watermark_library_item_id: str | None = None
@@ -116,6 +137,7 @@ SECTIONS: dict[str, type[_Section]] = {
     "sources": SourceSettings,
     "control": ControlSettings,
     "clips": ClipSettings,
+    "shorts": ShortsSettings,
     "brand": BrandSettings,
     "analytics": AnalyticsSettings,
     "retention": RetentionSettings,

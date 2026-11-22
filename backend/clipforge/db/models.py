@@ -402,6 +402,11 @@ class Clip(Base):
     scoring_method: Mapped[str] = mapped_column(String(60), default="local_heuristic")
     status: Mapped[str] = mapped_column(String(30), default="candidate")  # candidate|selected|rendered|rejected|failed
     edit_plan: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: First-3-seconds hook and loop-seam scores (None until those stages ran).
+    hook_score: Mapped[float | None] = mapped_column(Float)
+    loop_score: Mapped[float | None] = mapped_column(Float)
+    #: hook, loop, retention_plan, packaging_variants, originality_flags, publish_gate_result, analytics
+    shorts: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     strategy_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("strategies.id", ondelete="SET NULL"))
     experiment_variant: Mapped[str | None] = mapped_column(String(10))
     created_at: Mapped[datetime] = _created()

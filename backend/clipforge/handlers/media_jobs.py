@@ -329,8 +329,10 @@ def render_job(ctx: JobContext) -> dict:
         project_id = project.id
         start, end, rank, hook = clip.start_s, clip.end_s, clip.rank, clip.hook
         clips_cfg = app_settings.get_section(db, "clips")
+        shorts_cfg = app_settings.get_section(db, "shorts")
         brand = app_settings.get_section(db, "brand")
         aspects = project.request.get("aspects") or clips_cfg.aspects
+        scores = dict(clip.scores or {})
         done = {r.aspect for r in db.execute(select(Render).where(Render.clip_id == clip_id, Render.status == "done")).scalars()}
         # Owner-licensed assets only (rights explicitly confirmed in the media library).
         library = {}
@@ -351,6 +353,8 @@ def render_job(ctx: JobContext) -> dict:
     scene_cuts = [s["start"] for s in (analyses.get("scenes") or []) if isinstance(s, dict) and s.get("start", 0) > 0]
     settings = get_settings()
     work = settings.work_dir / "render" / str(clip_id)
+    shorts_plan = shorts_stage(words, analyses, start, end, has_video=paths["has_video"], scores=scores, cfg=shorts_cfg)
+    start, end = shorts_plan["start"], shorts_plan["end"]
     results = []
     for n, aspect in enumerate(aspects):
         if aspect in done:
@@ -365,7 +369,9 @@ def render_job(ctx: JobContext) -> dict:
                                  punch_in=clips_cfg.punch_in_zoom, loudness_lufs=clips_cfg.loudness_lufs,
                                  music=options.get("music_path"), music_db=clips_cfg.music_volume_db,
                                  watermark=options.get("watermark_path"), watermark_position=brand.watermark_position,
-                                 caption_accent=brand.accent_color)
+                                 caption_accent=brand.accent_color, **shorts_plan["plan_options"])
+        if shorts_plan.get("reorder"):
+            plan.keep = reorder_keep(plan.keep, shorts_plan["reorder"])
         slug = f"clip{rank:02d}_{aspect.replace(':', 'x')}"
         base_key = f"projects/{project_id}/clips/{clip_id}"
         video_key = f"{base_key}/{slug}.mp4"
@@ -382,6 +388,8 @@ def render_job(ctx: JobContext) -> dict:
         decisions = render.render(paths["mezzanine"], plan, words, out_path, work, has_video=paths["has_video"],
                                   has_audio=True, cancelled=ctx.cancelled,
                                   still_at=out_t, still_path=work / f"{slug}_frame.jpg")
+        if shorts_cfg.loop_seam and aspect == "9:16":
+            finish_loop(out_path, plan.output_duration, shorts_plan, has_audio=True)
         qc = render.quality_check(out_path, expected_duration=plan.output_duration, aspect=aspect,
                                   loudness_target=plan.loudness_lufs)
         _commit(video_key, out_path)
@@ -432,6 +440,86 @@ def render_job(ctx: JobContext) -> dict:
                             "review_words": len(sub_report.review_words)})
         shutil.rmtree(work / slug, ignore_errors=True)
     with session_scope() as db:
-        db.get(Clip, clip_id).status = "rendered"
+        clip = db.get(Clip, clip_id)
+        clip.status = "rendered"
+        if shorts_plan["record"]:
+            record = shorts_plan["record"]
+            clip.shorts = {**(clip.shorts or {}), **record}
+            if "hook" in record:
+                clip.hook_score = record["hook"]["after"]["score"]
+            if "loop" in record:
+                clip.loop_score = record["loop"]["assessment"]["score"]
+            if (start, end) != (clip.start_s, clip.end_s):
+                clip.shorts["original_bounds"] = clip.shorts.get("original_bounds") or [clip.start_s, clip.end_s]
+                clip.start_s, clip.end_s = start, end
     shutil.rmtree(work, ignore_errors=True)
-    return {"renders": results}
+    return {"renders": results, "hook": (shorts_plan["record"].get("hook") or {}).get("status")}
+
+
+def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *, has_video: bool, scores: dict,
+                 cfg) -> dict:
+    """First-3-seconds hook and loop-seam decisions for one clip (source seconds), shared by every
+    aspect ratio. With all Shorts switches off it changes nothing."""
+    from ..shorts import hook as shook
+    from ..shorts import loop as sloop
+
+    out: dict = {"start": start, "end": end, "plan_options": {}, "record": {}, "reorder": None}
+    if cfg.hook_scorer:
+        visual = analyses.get("visual") if isinstance(analyses.get("visual"), list) else []
+        scenes = analyses.get("scenes") if isinstance(analyses.get("scenes"), list) else []
+        hcfg = shook.HookConfig(threshold=cfg.hook_threshold, max_first_line_s=cfg.max_first_line_s,
+                                runway_search_s=cfg.runway_search_s, min_duration_s=cfg.min_s,
+                                text_seconds=cfg.text_hook_seconds, tension_first=cfg.tension_first)
+        result = shook.reconstruct(words, start, end, visual=visual, scenes=scenes, has_video=has_video, cfg=hcfg,
+                                   rebuild=cfg.hook_reconstruct)
+        out["record"]["hook"] = result.to_dict()
+        out["plan_options"]["fade_in"] = False  # frame one is the picture, not black
+        if cfg.hook_reconstruct:
+            out["start"] = result.keep[0][0] if len(result.keep) == 1 else result.start
+            if len(result.keep) > 1:
+                out["reorder"] = result.keep
+            if cfg.text_hook and result.text_hook:
+                out["plan_options"].update(hook_text=result.text_hook, hook_text_s=cfg.text_hook_seconds,
+                                           hook_text_y=shook.text_position(visual, out["start"]))
+    if cfg.loop_seam:
+        lcfg = sloop.LoopConfig(threshold=cfg.loop_threshold, search_s=cfg.loop_search_s, min_duration_s=cfg.min_s,
+                                prefer_max_s=cfg.prefer_max_s, max_duration_s=cfg.max_s)
+        pacing = (float(scores.get("emotion", 0.5)) + float(scores.get("clarity", 0.5))) / 2
+        plan = sloop.choose_end(words, out["start"], out["end"], pacing=pacing, cfg=lcfg)
+        out["end"] = plan.end
+        out["record"]["loop"] = plan.to_dict()
+        out["plan_options"]["fade_out"] = False  # a loop must not end in black
+    return out
+
+
+def reorder_keep(keep: list[tuple[float, float]], outline: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Put the kept intervals in the order of ``outline`` (the hook's "open on the question"
+    order), cutting intervals at the outline's boundaries."""
+    ordered: list[tuple[float, float]] = []
+    for oa, ob in outline:
+        for a, b in keep:
+            pa, pb = max(a, oa), min(b, ob)
+            if pb - pa > 0.05:
+                ordered.append((round(pa, 3), round(pb, 3)))
+    return ordered or keep
+
+
+def finish_loop(video: Path, duration_s: float, shorts_plan: dict, *, has_audio: bool) -> None:
+    """After rendering: measure how alike the last and first frames are, and blend them when the
+    cut doesn't loop on its own."""
+    from ..shorts import loop as sloop
+
+    record = shorts_plan["record"].get("loop")
+    if not record:
+        return
+    similarity = sloop.frame_similarity(video)
+    record["visual_similarity"] = similarity
+    if record.get("bridge_s"):
+        bridged = video.with_name(video.stem + "_loop.mp4")
+        try:
+            sloop.bridge(video, bridged, record["bridge_s"], duration_s, has_audio=has_audio)
+            bridged.replace(video)
+            record["bridged"] = True
+        except Exception as exc:  # noqa: BLE001 - keep the un-bridged render, say why
+            record["bridged"] = False
+            record.setdefault("changes", []).append(f"bridge failed: {exc}"[:200])

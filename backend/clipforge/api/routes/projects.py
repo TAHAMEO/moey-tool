@@ -132,7 +132,8 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
         clips_out.append({"id": str(clip.id), "rank": clip.rank, "start_s": clip.start_s, "end_s": clip.end_s,
                           "title": clip.title, "hook": clip.hook, "transcript": clip.transcript_text, "scores": clip.scores,
                           "total_score": clip.total_score, "reasons": clip.reasons, "status": clip.status,
-                          "scoring_method": clip.scoring_method, "renders": renders, "packages": packages})
+                          "scoring_method": clip.scoring_method, "renders": renders, "packages": packages,
+                          "hook_score": clip.hook_score, "loop_score": clip.loop_score, "shorts": clip.shorts or {}})
     jobs = db.execute(select(Job).where(Job.project_id == project.id, Job.parent_id.is_(None)).order_by(Job.created_at)).scalars()
     return {**_project_summary(db, project), "instruction": project.instruction, "request": project.request,
             "limitations": project.limitations, "errors": project.errors,

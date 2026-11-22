@@ -82,6 +82,8 @@ export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; o
             <div className="mt-3 flex flex-wrap gap-1.5">{clip.reasons.map((r) => <Badge key={r} tone="primary">{r}</Badge>)}</div>
           )}
 
+          <ShortsStatus clip={clip} />
+
           {render && (
             <div className="mt-4 flex flex-wrap gap-2 text-[12px]">
               <Badge tone={render.quality.passed ? "success" : "danger"}>
@@ -150,5 +152,43 @@ export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; o
         </div>
       )}
     </Card>
+  );
+}
+
+const GATE_LABEL: Record<string, string> = {
+  approved: "Published / scheduled", awaiting_approval: "Waiting for your approval", held: "Held for review",
+  draft: "Draft only", not_approved: "Not approved",
+};
+
+/** First-3-seconds hook, loop seam and the publish decision, with the reasons. */
+function ShortsStatus({ clip }: { clip: Clip }) {
+  const hook = clip.shorts?.hook;
+  const loop = clip.shorts?.loop;
+  const gate = clip.shorts?.publish_gate_result;
+  if (!hook && !loop && !gate) return null;
+  const pct = (v?: number | null) => (v == null ? "–" : Math.round(v * 100));
+  return (
+    <div className="mt-4 space-y-2 rounded-xl border border-border p-3 text-[12px]">
+      <div className="flex flex-wrap gap-2">
+        {hook && (
+          <Badge tone={hook.status === "held" ? "warning" : "success"}>
+            First 3 s: {pct(clip.hook_score)}{hook.status === "improved" ? ` (was ${pct(hook.before.score)})` : ""}
+          </Badge>
+        )}
+        {loop && <Badge tone={loop.assessment.loopable ? "success" : "neutral"}>Loop: {pct(clip.loop_score)}{loop.bridged ? " · blended" : ""}</Badge>}
+        {gate && <Badge tone={gate.result === "held" ? "warning" : gate.result === "approved" ? "success" : "neutral"}>{GATE_LABEL[gate.result] ?? gate.result}</Badge>}
+      </div>
+      {hook?.text_hook && <p className="text-muted">Text on frame one: <span className="font-semibold text-text">{hook.text_hook}</span></p>}
+      {[...(hook?.changes ?? []), ...(loop?.changes ?? [])].length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-4 text-muted">
+          {[...(hook?.changes ?? []), ...(loop?.changes ?? [])].map((c) => <li key={c}>{c}</li>)}
+        </ul>
+      )}
+      {(gate?.result === "held" || hook?.status === "held") && (
+        <ul className="list-disc space-y-0.5 pl-4 text-warning">
+          {[...new Set([...(gate?.reasons ?? []), ...(hook?.after.reasons ?? [])])].map((r) => <li key={r}>{r}</li>)}
+        </ul>
+      )}
+    </div>
   );
 }

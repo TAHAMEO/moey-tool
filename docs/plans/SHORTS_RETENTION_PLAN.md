@@ -1,7 +1,22 @@
 # Shorts retention upgrade — plan
 
-Status: **proposal, nothing implemented yet.** P0 waits for the owner's answers to the questions at
-the end (two of them change publishing behaviour).
+Status: **P0 implemented** (hook scorer + reconstruction, loop seam, review hold) — `clipforge/shorts/`,
+switches in Settings → Clips & editing (off until turned on). P1–P3 not started.
+
+Owner's decisions (2026-11-22): weak-hook clips are **held for review** (manual publish still
+possible); **no sentence re-ordering** unless "Open on the question" is switched on; **local AI
+first** for hook text and titles (P0 itself uses no AI model — rules over the transcript).
+
+What changed while building P0 (found by tests and a real clip):
+- a text overlay never rescues a weak *spoken* opening (the fix-or-hold decision uses the spoken
+  opening only);
+- runway removal skips only throat-clearing (greetings, "today we're going to…", filler, silence,
+  near-empty lines) — never a sentence with substance;
+- loop shortening only at a real conclusion with a good loop score (it had cut 20 s of a 33 s clip);
+- cuts land inside the pause, never into the next word;
+- clips no longer fade in from black (frame one was a black frame);
+- the text hook keeps every word in ≤ 3 lines, sized to the width, and sits in the half of the
+  middle third away from the speaker's face.
 
 ## 1. The pipeline today (from the code)
 

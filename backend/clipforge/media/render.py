@@ -54,6 +54,15 @@ class EditPlan:
     music: str | None = None
     music_db: float = -22.0
     fade_s: float = 0.15
+    #: Shorts: frame one must be a real picture (no fade from black) and a loop must not end in black.
+    fade_in: bool = True
+    fade_out: bool = True
+    #: Shorts: bold 1-5 word text on frame one, middle third of the screen, for ``hook_text_s`` seconds.
+    hook_text: str | None = None
+    hook_text_s: float = 1.5
+    #: Vertical centre of the text hook (share of the height), kept inside the middle third and
+    #: away from the speaker's face (see shorts.hook.text_position).
+    hook_text_y: float = 0.42
     removed_silence_s: float = 0.0
     notes: list[str] = field(default_factory=list)
 
@@ -274,7 +283,9 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
         parts.append(f"[vstill]trim=start={t0:.3f}:duration=0.2,setpts=PTS-STARTPTS[still]")
         current = "[vmain]"
     fade_out_at = max(0.0, total - plan.fade_s - 0.05)
-    parts.append(f"{current}fade=t=in:st=0:d={plan.fade_s},fade=t=out:st={fade_out_at:.3f}:d={plan.fade_s}[vfade]")
+    fades = ([f"fade=t=in:st=0:d={plan.fade_s}"] if plan.fade_in else []) + \
+        ([f"fade=t=out:st={fade_out_at:.3f}:d={plan.fade_s}"] if plan.fade_out else [])
+    parts.append(f"{current}{','.join(fades) or 'null'}[vfade]")
     current = "[vfade]"
     if watermark_index is not None:
         margin = 40
@@ -302,6 +313,56 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
     return ";".join(parts), audio_out
 
 
+HOOK_STYLE = "TextHook"
+
+
+def wrap_hook(text: str, max_lines: int = 3) -> list[str]:
+    """Balanced lines for the text hook: the narrowest wrap that fits in ``max_lines``; every word kept."""
+    words = text.split()
+    longest = max((len(w) for w in words), default=1)
+    for max_chars in range(max(10, longest), 40):
+        lines: list[str] = []
+        for word in words:
+            if lines and len(lines[-1]) + 1 + len(word) <= max_chars:
+                lines[-1] += " " + word
+            else:
+                lines.append(word)
+        if len(lines) <= max_lines:
+            return lines
+    return [" ".join(words)]
+
+
+def add_text_hook(ass_path: Path, text: str, seconds: float, *, width: int, height: int, accent: str,
+                  y_ratio: float = 0.42) -> Path:
+    """Add the frame-one text hook to the clip's .ass file (created if captions are off): big,
+    white on a heavy black outline, centred in the middle third, visible from the very first frame."""
+    import pysubs2
+
+    subs = pysubs2.load(str(ass_path), encoding="utf-8") if ass_path.exists() else pysubs2.SSAFile()
+    subs.info["PlayResX"], subs.info["PlayResY"] = str(width), str(height)
+    lines = wrap_hook(text)
+    style = pysubs2.SSAStyle()
+    style.fontname = "Anton"
+    longest = max(len(line) for line in lines)
+    # Anton capitals are about half an em wide: fit the longest line into 86 % of the width.
+    style.fontsize = round(min(height * 0.075, width * 0.86 / (longest * 0.5)))
+    style.primarycolor = vcaptions.hex_to_ass("#FFFFFF")
+    style.secondarycolor = vcaptions.hex_to_ass(accent)
+    style.outlinecolor = vcaptions.hex_to_ass("#000000")
+    style.backcolor = vcaptions.hex_to_ass("#000000", alpha=120)
+    style.bold = True
+    style.outline = round(height / 1920 * 9, 1)
+    style.shadow = round(height / 1920 * 4, 1)
+    style.alignment = pysubs2.Alignment.MIDDLE_CENTER
+    subs.styles[HOOK_STYLE] = style
+    x, y = width // 2, round(height * max(0.36, min(0.62, y_ratio)))  # middle third, clear of the captions
+    body = r"\N".join(lines)
+    subs.events.append(pysubs2.SSAEvent(start=0, end=pysubs2.make_time(s=seconds), style=HOOK_STYLE, layer=10,
+                                        text=f"{{\\pos({x},{y})\\fad(0,180)}}{body}"))
+    subs.save(str(ass_path), encoding="utf-8")
+    return ass_path
+
+
 def caption_style_for(plan: EditPlan) -> vcaptions.CaptionStyle:
     """The preset caption style, with the brand accent colour on the highlighted word."""
     style = vcaptions.get_style(plan.caption_style)
@@ -326,9 +387,15 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
     out_words = remap_words(words, plan.keep)
     subtitle_name = None
     cwd = None
+    ass_path = None
     if plan.burn_captions and out_words:
         style = caption_style_for(plan)
         ass_path = vcaptions.write_ass(workspace / "captions.ass", out_words, style, width=out_w, height=out_h)
+    if plan.hook_text:
+        ass_path = add_text_hook(ass_path or workspace / "captions.ass", plan.hook_text, plan.hook_text_s,
+                                 width=out_w, height=out_h, accent=plan.caption_accent or "#FFE500",
+                                 y_ratio=plan.hook_text_y)
+    if ass_path is not None:
         cwd, subtitle_name, _fonts = vff.relative_filter_workspace(ass_path, vcaptions.FONT_DIR)
     inputs = ["-ss", f"{plan.clip_start:.4f}", "-t", f"{plan.clip_end - plan.clip_start:.4f}", "-i", str(mezzanine)]
     next_index = 1
@@ -367,6 +434,7 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
         "captions_burned": bool(subtitle_name),
         "still": str(still_path) if want_still and still_path.exists() else None,
         "caption_style": plan.caption_style,
+        "text_hook": plan.hook_text,
         "music": bool(music_index is not None),
         "watermark": bool(watermark_index is not None),
         "loudness_target": plan.loudness_lufs,

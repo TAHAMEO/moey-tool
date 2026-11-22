@@ -2,7 +2,7 @@
 
 import { Input, Label, Select, Toggle } from "@/components/ui";
 import { useResource } from "@/lib/hooks";
-import type { BrandSettings, ClipSettings, LibraryItem } from "@/lib/types";
+import type { BrandSettings, ClipSettings, LibraryItem, ShortsSettings } from "@/lib/types";
 import { Chips, NumberField, Row, SettingsSection, type SectionProps } from "./shared";
 
 const CAPTION_STYLES: { value: ClipSettings["caption_style"]; label: string }[] = [
@@ -60,6 +60,7 @@ export function ClipsSection({ settings, save, editable }: SectionProps) {
           <NumberField label="Music volume" value={c.music_volume_db} min={-40} max={-6} step={1} suffix="dB" disabled={!editable} onCommit={(v) => set({ music_volume_db: v })} />
         )}
       </Row>
+      <ShortsRows settings={settings} save={save} editable={editable} />
     </SettingsSection>
   );
 }
@@ -100,5 +101,41 @@ export function BrandSection({ settings, save, editable }: SectionProps) {
         </div>
       </Row>
     </SettingsSection>
+  );
+}
+
+/** First-3-seconds hook and loop switches (each on its own; all off until you turn them on). */
+function ShortsRows({ settings, save, editable }: SectionProps) {
+  const s = settings.shorts;
+  if (!s) return null;
+  const set = (patch: Partial<ShortsSettings>) => save("shorts", patch);
+  return (
+    <>
+      <Row className="space-y-4">
+        <Label>Shorts: the first 3 seconds</Label>
+        <Toggle checked={s.hook_scorer} disabled={!editable} onChange={(v) => set({ hook_scorer: v })}
+          label="Score the first 3 seconds of every clip" description="Frame-one clarity, how soon the first line lands, the curiosity it opens, swipe-away risk and the on-screen text." />
+        <Toggle checked={s.hook_reconstruct} disabled={!editable || !s.hook_scorer} onChange={(v) => set({ hook_reconstruct: v })}
+          label="Fix weak openings" description="Cuts greetings, filler and slow starts, makes the first line land within 1.5 s and adds a bold text hook on frame one — made only from the clip's own words." />
+        <Toggle checked={s.hook_gate} disabled={!editable || !s.hook_scorer} onChange={(v) => set({ hook_gate: v })}
+          label="Hold clips with a weak opening for review" description="They're never published automatically; you can still publish them yourself." />
+        <Toggle checked={s.tension_first} disabled={!editable || !s.hook_reconstruct} onChange={(v) => set({ tension_first: v })}
+          label="Open on the question" description="When a clip gives the answer first, start it with the speaker's own question from later in the clip. Changes the order of what was said — off unless you want it." />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <NumberField label="Hold below hook score" value={Math.round(s.hook_threshold * 100)} min={0} max={100} suffix="/100" disabled={!editable} onCommit={(v) => set({ hook_threshold: v / 100 })} />
+          <NumberField label="First line within" value={s.max_first_line_s} min={0.3} max={5} step={0.1} suffix="sec" disabled={!editable} onCommit={(v) => set({ max_first_line_s: v })} />
+        </div>
+      </Row>
+      <Row className="space-y-4">
+        <Label>Shorts: loop</Label>
+        <Toggle checked={s.loop_seam} disabled={!editable} onChange={(v) => set({ loop_seam: v })}
+          label="Make clips loop" description="Ends on a sentence that flows back into the opening (shorter when that stays complete); otherwise blends the last frames into the first so the replay doesn't jump." />
+        <div className="grid gap-4 sm:grid-cols-3">
+          <NumberField label="Prefer under" value={s.prefer_max_s} min={10} max={90} suffix="sec" disabled={!editable} onCommit={(v) => set({ prefer_max_s: v })} />
+          <NumberField label="Never shorter than" value={s.min_s} min={3} max={60} suffix="sec" disabled={!editable} onCommit={(v) => set({ min_s: v })} />
+          <NumberField label="Never longer than" value={s.max_s} min={15} max={180} suffix="sec" disabled={!editable} onCommit={(v) => set({ max_s: v })} />
+        </div>
+      </Row>
+    </>
   );
 }
