@@ -41,6 +41,20 @@ def test_environment_is_local_and_single_person(tmp_path):
     assert env["CLIPFORGE_DATA_DIR"] == str(tmp_path / "data")
     assert env["CLIPFORGE_INBOX_DIR"].endswith("ClipForge")
     assert env["CLIPFORGE_COOKIE_SECURE"] == "false"
+    assert env["CLIPFORGE_REDIS_URL"] == "none"
+
+
+def test_no_redis_means_no_connection_attempts(monkeypatch):
+    from clipforge.config import get_settings
+    from clipforge.services import redis_client
+
+    monkeypatch.setenv("CLIPFORGE_REDIS_URL", "none")
+    get_settings.cache_clear()
+    try:
+        assert redis_client.get_redis() is None
+    finally:
+        monkeypatch.delenv("CLIPFORGE_REDIS_URL")
+        get_settings.cache_clear()
 
 
 def test_time_zone_data_for_postgresql(tmp_path):

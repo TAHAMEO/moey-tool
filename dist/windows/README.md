@@ -1,42 +1,35 @@
 # CLIPFORGE for Windows — installer
 
-`ClipForge-Setup-0.2.3.exe` installs CLIPFORGE on Windows 10 (version 2004 or later) and
-Windows 11. Download it, double-click it and follow the steps — see [docs/WINDOWS.md](../../docs/WINDOWS.md).
+`ClipForge-Setup-0.3.0.exe` installs CLIPFORGE on Windows 10 (1809 or later) and Windows 11 as an
+ordinary Windows app: **no Docker, no Linux, no WSL, no administrator rights, no sign-in**. Download
+it, double-click it and follow the steps — see [docs/WINDOWS.md](../../docs/WINDOWS.md).
 
-- Built from the commit that adds it with `installer/windows/build.sh` (NSIS 3.09).
-- SHA-256: see `ClipForge-Setup-0.2.3.exe.sha256`.
+- SHA-256: see `ClipForge-Setup-0.3.0.exe.sha256`.
 - Not code-signed: Windows SmartScreen may show "Windows protected your PC" — choose
   *More info → Run anyway*. Signing it needs a code-signing certificate from the publisher.
-- Rebuild after changing CLIPFORGE: `installer/windows/build.sh` (on Linux with `nsis` installed).
+- Rebuild after changing CLIPFORGE: `installer/windows/build.sh` (on Linux with `nsis` and Node.js 22).
 
 ## Tested
 
-The same `setup.exe` (built from the same source) ran silently through the whole installation on
-real Windows Server 2022 and 2025 machines in GitHub Actions, after which CLIPFORGE answered on
-http://localhost:3000 — see docs/TEST_RESULTS.md.
+The same `setup.exe` (built from the same source by CI) installed silently on real Windows Server
+2022 and 2025 machines in GitHub Actions, run
+[44980699387](https://github.com/TAHAMEO/moey-tool/actions/runs/44980699387): CLIPFORGE answered on
+http://localhost:3000 without a sign-in; database, FFmpeg, workers, memory and downloader all OK;
+listening on 127.0.0.1 only; stopped and started again; updated in place keeping its data; and
+uninstalled. Not covered there: the 1.8 GB speech model download and Windows 10/11 desktop editions.
 
-## Changes in 0.2.3
+## Changes in 0.3.0
 
-- The 1.8 GB speech-model download shows its progress (percent, speed, minutes left).
+- Runs as an ordinary Windows app: Python, its own PostgreSQL (with pgvector), FFmpeg and Node.js,
+  all from checksum-pinned packages, listening on this PC only. No Docker, Linux or WSL.
+- No administrator rights needed; installs into your own folder.
+- No sign-in: the browser on this PC is you.
+- New **Schedule** page: every finished clip ready to schedule, upcoming posts by day (change or
+  cancel), recently posted.
+- Setup stops an older Linux-based CLIPFORGE (0.2.x) and offers to remove it.
 
-## Changes in 0.2.2
+## Earlier versions
 
-- Setup checks that Windows can run WSL 2's virtual machine before creating the Linux environment.
-  If Windows hasn't restarted since Virtual Machine Platform was turned on, it asks for the restart
-  and continues afterwards; if Windows' hypervisor is switched off in the boot settings, it switches
-  it on; if virtualization is off in the BIOS/UEFI, it says how to turn it on.
-- A verified Ubuntu download is kept if creating the environment fails, so the next run doesn't
-  download it again.
-- Programs setup runs can never wait for input, and WSL's own commands have a time limit.
-
-## Changes in 0.2.1
-
-- Fixed: 0.2.0 stopped right after turning on the Windows features with
-  "The term 'wsl.exe' is not recognized". Setup now runs its steps in 64-bit PowerShell and finds
-  WSL wherever Windows keeps it. If 0.2.0 already turned the features on, 0.2.1 sees that, asks
-  for the restart, and continues after you sign in again.
-- Fixed: a step could stop early when a program printed progress messages to its error output.
-- After the restart, setup continues through a one-time sign-in task that has administrator rights.
-- Running setup again offers the folder you installed into before.
-- Folder names with characters such as `'`, `&` or `$` are passed to Linux unchanged.
-- *Open CLIPFORGE now* opens your browser without administrator rights.
+- 0.2.3: the speech-model download shows progress.
+- 0.2.2: checks that Windows can run WSL 2's virtual machine.
+- 0.2.1: fixed "'wsl.exe' is not recognized" on 64-bit Windows.

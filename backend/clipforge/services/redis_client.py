@@ -25,7 +25,7 @@ _local_counters: dict[str, tuple[int, float]] = {}
 
 def get_redis() -> redis.Redis | None:
     global _client, _down_until
-    if not get_settings().redis_url:  # no Redis (the Windows app): the database does the work
+    if get_settings().redis_url.strip().lower() in ("", "none"):  # no Redis (the Windows app): the database does the work
         return None
     if time.monotonic() < _down_until:
         return None

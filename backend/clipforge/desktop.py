@@ -162,7 +162,7 @@ def environment(layout: Layout, config: dict[str, str]) -> dict[str, str]:
         "CLIPFORGE_LOCAL_MODE": "true",  # one person on this PC: no sign-in
         "CLIPFORGE_DATA_DIR": str(layout.data),
         "CLIPFORGE_DATABASE_URL": f"postgresql+psycopg://clipforge:{config['CLIPFORGE_DB_PASSWORD']}@127.0.0.1:{db_port}/clipforge",
-        "CLIPFORGE_REDIS_URL": config.get("CLIPFORGE_REDIS_URL", ""),  # none: the database is the queue
+        "CLIPFORGE_REDIS_URL": config.get("CLIPFORGE_REDIS_URL", "none"),  # the database is the queue
         "CLIPFORGE_PUBLIC_BASE_URL": f"http://localhost:{web_port}",
         "CLIPFORGE_ALLOWED_ORIGINS": f"http://localhost:{web_port},http://127.0.0.1:{web_port}",
         "CLIPFORGE_COOKIE_SECURE": "false",  # plain http on this PC only

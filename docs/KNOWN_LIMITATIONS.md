@@ -27,16 +27,13 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
   is verified against local fakes of Google's and Instagram's OAuth endpoints and, for the relay
   page, in a real Chromium browser. A real sign-in needs a registered app and a person at the
   consent screen.
-- **The Windows installer** is tested on real Windows machines in GitHub Actions (Windows Server
-  2022 and 2025, run [44955908487](https://github.com/TAHAMEO/moey-tool/actions/runs/44955908487)):
-  the real `setup.exe` runs silently through the whole installation — WSL 2, Ubuntu, Docker Engine,
-  the CLIPFORGE build — and CLIPFORGE then answers on `http://localhost:3000` from Windows. Not
-  covered there: the 1.8 GB speech-model download (skipped in CI; it is slow from its publisher's
-  server), the restart path on a PC that has never used WSL (those machines already had the WSL
-  features on), and Windows 10/11 desktop editions. On a real Windows 11 PC, 0.2.0 failed with
-  "'wsl.exe' is not recognized" and 0.2.1 got as far as creating the Linux environment, where
-  Windows could not yet run virtual machines; 0.2.2 detects that case. The installer is not
-  code-signed, so SmartScreen asks once before it runs.
+- **The Windows app** (0.3.0, no Docker or Linux) was installed silently and checked end to end on
+  real Windows Server 2022 and 2025 machines in GitHub Actions; a Windows 10/11 desktop run and the
+  1.8 GB speech-model download on Windows are not yet verified. Its PostgreSQL comes from the
+  `pgserver` package: version 16.2 (February 2024) with pgvector 0.6.2 — older than current
+  releases, so it misses later PostgreSQL bug and security fixes; it only listens on 127.0.0.1 with
+  a random password. It has no sign-in by design (one person, one PC): anyone who can use this
+  Windows account can use CLIPFORGE. The installer is not code-signed, so SmartScreen asks once.
 - **Cloud AI providers** (OpenAI, Gemini, Anthropic) are verified with contract tests only. Real
   model calls were verified with local models (Llama 3.2 1B and Qwen 2.5 3B through Ollama).
 - **WhisperX**: its isolated environment installs from the hashed lock file and imports
