@@ -1,10 +1,10 @@
 # CLIPFORGE for Windows — installer
 
-`ClipForge-Setup-0.3.0.exe` installs CLIPFORGE on Windows 10 (1809 or later) and Windows 11 as an
+`ClipForge-Setup-0.3.1.exe` installs CLIPFORGE on Windows 10 (1809 or later) and Windows 11 as an
 ordinary Windows app: **no Docker, no Linux, no WSL, no administrator rights, no sign-in**. Download
 it, double-click it and follow the steps — see [docs/WINDOWS.md](../../docs/WINDOWS.md).
 
-- SHA-256: see `ClipForge-Setup-0.3.0.exe.sha256`.
+- SHA-256: see `ClipForge-Setup-0.3.1.exe.sha256`.
 - Not code-signed: Windows SmartScreen may show "Windows protected your PC" — choose
   *More info → Run anyway*. Signing it needs a code-signing certificate from the publisher.
 - Rebuild after changing CLIPFORGE: `installer/windows/build.sh` (on Linux with `nsis` and Node.js 22).
@@ -17,6 +17,11 @@ The same `setup.exe` (built from the same source by CI) installed silently on re
 http://localhost:3000 without a sign-in; database, FFmpeg, workers, memory and downloader all OK;
 listening on 127.0.0.1 only; stopped and started again; updated in place keeping its data; and
 uninstalled. Not covered there: the 1.8 GB speech model download and Windows 10/11 desktop editions.
+
+## Changes in 0.3.1
+
+- Fixed: downloading or uploading a video failed with "storage error: key escapes storage root"
+  (storage paths were checked as text with "/" — Windows uses "\\").
 
 ## Changes in 0.3.0
 

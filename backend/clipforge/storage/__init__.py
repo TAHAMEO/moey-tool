@@ -51,8 +51,10 @@ class LocalStorage:
         root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        path = (self.root / check_key(key)).resolve()
-        if not str(path).startswith(str(self.root.resolve()) + "/"):
+        root = self.root.resolve()
+        path = (root / check_key(key)).resolve()
+        # Compared as paths, not text: Windows separates folders with "\", not "/".
+        if path == root or not path.is_relative_to(root):
             raise StorageError("Key escapes storage root")
         return path
 

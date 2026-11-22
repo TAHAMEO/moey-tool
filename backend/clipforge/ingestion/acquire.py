@@ -118,7 +118,7 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
     if method == "owner_media_library" and params.get("library_path"):
         library = (settings.library_dir / "masters").resolve()
         path = Path(params["library_path"]).resolve()
-        if not str(path).startswith(str(library) + "/"):
+        if path == library or not path.is_relative_to(library):  # paths, not text (Windows uses "\\")
             raise AcquisitionError("Library path is outside the media library.", state=r.ACCESS_DENIED)
         dest = tmp_dir / ("library" + path.suffix)
         shutil.copy2(path, dest)
