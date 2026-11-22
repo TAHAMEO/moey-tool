@@ -43,7 +43,12 @@ libass caption builder.
 | Ollama (optional, `local-ai` profile) | MIT | Local language-model server |
 | Deno 2.9 (PyPI `deno` wheel, inside the backend image) | MIT | Sandboxed JavaScript runtime for yt-dlp's YouTube challenge scripts |
 | Windows installer stub (NSIS 3.09) | zlib/libpng | `ClipForge-Setup.exe` |
-| Ubuntu 24.04 WSL image, Docker Engine (downloaded by the Windows installer on the user's PC) | various (Ubuntu package licences) / Apache-2.0 | CLIPFORGE's WSL 2 environment; not redistributed with CLIPFORGE |
+| Inoue-AI Instagram SDK 0.1.0 (wheel in `backend/vendor-wheels/`, built from commit 5fcda41) | MIT | Instagram API client |
+| Windows app only, installed on the user's PC from PyPI by the installer (pinned in `backend/uv.lock`; not redistributed with CLIPFORGE): | | |
+| PostgreSQL 16.2 + pgvector 0.6.2 (PyPI `pgserver` 0.1.4, MinGW build) | PostgreSQL License (package: Apache-2.0) | Database, vector search, on 127.0.0.1 |
+| FFmpeg 6.0 "essentials" build from gyan.dev (PyPI `ffmpeg-binaries` 1.1.0) | GPL-3.0 (separate executables) | Media processing on Windows |
+| Node.js 24 (PyPI `nodejs-wheel-binaries` 24.19.0) | MIT | Runs the web app on Windows |
+| uv 0.13.9 (PyPI `uv`) and Python 3.12 (python-build-standalone, installed by uv) | Apache-2.0 / MIT; PSF-2.0 | Installs Python and the locked packages |
 | WhisperX 3.8.6 + PyTorch (optional, separate environment) | BSD-2-Clause, BSD-3-Clause | High-accuracy transcription; see `sbom/whisperx-worker.cdx.json` |
 
 ## Models

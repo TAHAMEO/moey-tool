@@ -72,8 +72,16 @@ Every source you've sent, newest first, filterable by *In progress*, *Ready*, *P
 
 ### Scheduling posts
 
-Choose **Schedule…** on a package (or schedule while approving, or in chat) and pick the date
-and time; times are in your own time zone.
+Open **Schedule** in the menu. It has everything in one place:
+
+- **Ready to schedule** — every finished clip. Press **Schedule…** and pick the date and time (or
+  a quick pick such as *Tomorrow 18:00*), or tick several clips, press **Schedule selected** and
+  space them out (*one every hour/day/week*).
+- **Upcoming posts** — what goes out when, grouped by day, with **Change** and cancel.
+- **Recently posted** — what went out in the last two weeks.
+
+You can also schedule from a clip's package in My Videos (**Schedule…**), while approving, or in
+chat ("publish clip 1 tomorrow at 6pm"). Times are in your own time zone.
 
 - **Public YouTube videos** scheduled at least 15 minutes ahead are uploaded right away as
   *private* with that publish time, and **YouTube itself** makes them public — even if your
@@ -87,7 +95,7 @@ and time; times are in your own time zone.
   the time are used, also for videos already waiting on YouTube.
 - Approvals can spread several clips out (*one per hour/day/week*); both platforms of one clip go
   out together. Daily limits are checked for the day you choose.
-- **Dashboard → Upcoming posts** lists everything scheduled, and how each one goes out.
+- **Schedule** and **Dashboard → Upcoming posts** list everything scheduled, and how each one goes out.
 - *Hold publishing* keeps the times but nothing goes out (videos waiting on YouTube are switched
   back to private meanwhile); *emergency stop* cancels every schedule. *Pause* only stops
   CLIPFORGE's own work — posts already handed to YouTube still go live.

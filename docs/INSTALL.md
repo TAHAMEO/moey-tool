@@ -73,15 +73,14 @@ CLIPFORGE picks the best available engine automatically: WhisperX → faster-whi
 
 ## Windows
 
-Use the installer: **ClipForge-Setup-&lt;version&gt;.exe** turns on WSL 2 if needed, creates
-CLIPFORGE's own Linux environment with the free Docker Engine (no Docker Desktop), builds
-CLIPFORGE, downloads the speech model and adds Start menu shortcuts — with a progress window, and
-continuing by itself if Windows has to restart. Everything is in **[WINDOWS.md](WINDOWS.md)**.
+Use the installer: **ClipForge-Setup-&lt;version&gt;.exe** installs CLIPFORGE as an ordinary Windows
+app — Python, its own PostgreSQL, FFmpeg and Node.js, all from checksum-pinned packages; no Docker,
+no Linux, no WSL, no administrator rights — with a progress window, Start menu shortcuts and no
+sign-in (one person, one PC). Everything is in **[WINDOWS.md](WINDOWS.md)**.
 
-Prefer Docker Desktop? It works too: with its WSL 2 engine and the Ubuntu integration switched
-on, clone this repository inside Ubuntu (`~/clipforge`, not a `C:\` folder) and run
-`bash scripts/install.sh`. Give WSL enough memory (`%USERPROFILE%\.wslconfig`: `[wsl2]`,
-`memory=12GB`). Docker Desktop is free for personal use and small businesses only.
+To run the server version on Windows instead (several users, sign-in), use Docker Desktop with its
+WSL 2 engine: clone this repository inside Ubuntu (`~/clipforge`, not a `C:\` folder) and follow the
+Linux steps above.
 
 ## Bare metal (Ubuntu 24.04, systemd)
 

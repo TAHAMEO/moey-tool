@@ -58,10 +58,10 @@ Instagram accounts, then learns from the results.
 
 ## Windows 10 and 11
 
-Run **ClipForge-Setup-&lt;version&gt;.exe** (a ready-built one is in [dist/windows](dist/windows/)): it turns on WSL 2 if needed, sets up everything
-CLIPFORGE needs (no Docker Desktop required), shows its progress, continues by itself after a
-restart, and adds Start menu shortcuts. See [docs/WINDOWS.md](docs/WINDOWS.md). The installer is
-built with `installer/windows/build.sh`.
+Run **ClipForge-Setup-&lt;version&gt;.exe** (a ready-built one is in [dist/windows](dist/windows/)).
+CLIPFORGE installs as an ordinary Windows app — no Docker, no Linux, no administrator rights, no
+sign-in — shows its progress, adds Start menu shortcuts and opens in your browser. See
+[docs/WINDOWS.md](docs/WINDOWS.md). The installer is built with `installer/windows/build.sh`.
 
 ## Quick start (Docker)
 
