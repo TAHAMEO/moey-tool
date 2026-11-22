@@ -44,6 +44,9 @@ function Get-Port {
   return "3000"
 }
 $Url = "http://localhost:$(Get-Port)"
+# Checks go to 127.0.0.1 directly: Windows tries "localhost" as IPv6 (::1) first, where nothing
+# listens, and a refused connection there costs about two seconds.
+$CheckUrl = "http://127.0.0.1:$(Get-Port)"
 
 function Write-Log([string]$Message) {
   $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -72,7 +75,7 @@ function Invoke-Desktop([string[]]$Arguments) {
 }
 
 function Test-Ready {
-  try { return (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "$Url/api/health/ready").StatusCode -eq 200 }
+  try { return (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "$CheckUrl/api/health/ready").StatusCode -eq 200 }
   catch { return $false }
 }
 

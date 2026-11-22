@@ -1,6 +1,6 @@
 # Builds the Windows installer and runs the real setup.exe silently on Windows Server 2022 and 2025.
 # CLIPFORGE installs as an ordinary Windows app (no Docker, no Linux, no administrator rights): the
-# test checks that it answers on http://localhost:3000 without a sign-in, stops and starts again,
+# test checks that it answers on http://127.0.0.1:3000 without a sign-in, stops and starts again,
 # updates in place, and uninstalls. Only the 1.8 GB speech model is skipped.
 name: Windows installer
 
@@ -108,7 +108,7 @@ jobs:
             Write-Host "$([IO.Path]::GetFileName($Path)) $($Arguments -join ' ') -> exit code $($p.ExitCode) after $([int]((Get-Date) - $started).TotalSeconds) s"
             return [int]$p.ExitCode
           }
-          function Test-Ready { try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 "http://localhost:3000/api/health/ready").StatusCode -eq 200 } catch { $false } }
+          function Test-Ready { try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 "http://127.0.0.1:3000/api/health/ready").StatusCode -eq 200 } catch { $false } }
           function Show-Logs {
             Write-Host "----- install.log -----"; Get-Content (Join-Path $dir "install.log") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
             foreach ($log in Get-ChildItem (Join-Path $dir "logs") -Filter *.log -ErrorAction SilentlyContinue) {
@@ -129,20 +129,20 @@ jobs:
             if (-not $log.Contains($line)) { $problems += "install.log lacks: $line" }
           }
           if ($log -match "is not recognized|ERROR:") { $problems += "install.log reports an error" }
-          if (-not (Test-Ready)) { $problems += "CLIPFORGE does not answer on http://localhost:3000 after setup" }
+          if (-not (Test-Ready)) { $problems += "CLIPFORGE does not answer on http://127.0.0.1:3000 after setup" }
 
           # 2. No sign-in: this browser is the owner straight away.
           $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-          $me = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://localhost:3000/api/auth/me"
+          $me = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://127.0.0.1:3000/api/auth/me"
           "auth/me: $($me | ConvertTo-Json -Compress)"
           if ($me.role -ne "owner" -or -not $me.local) { $problems += "a sign-in would be needed" }
-          $schedule = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://localhost:3000/api/schedule"
+          $schedule = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://127.0.0.1:3000/api/schedule"
           if ($null -eq $schedule.ready) { $problems += "the Schedule page's API doesn't answer" }
-          $diag = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://localhost:3000/api/diagnostics"
+          $diag = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://127.0.0.1:3000/api/diagnostics"
           "diagnostics: database=$($diag.database.ok) ffmpeg=$($diag.ffmpeg.ok) workers=$($diag.workers.ok) memory=$($diag.memory.ok) downloader=$($diag.downloader.ok)"
           foreach ($part in @("database", "ffmpeg", "workers", "memory", "downloader")) { if (-not $diag.$part.ok) { $problems += "diagnostics: $part is not OK" } }
           foreach ($page in @("/", "/schedule", "/videos", "/settings")) {
-            $status = try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://localhost:3000$page").StatusCode } catch { "$_" }
+            $status = try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://127.0.0.1:3000$page").StatusCode } catch { "$_" }
             "page $page -> $status"
             if ($status -ne 200) { $problems += "page $page answered $status" }
           }
@@ -163,7 +163,7 @@ jobs:
           # 4. Update: run setup again over the running installation; data is kept.
           $code = Invoke-Setup $exe @("/S", "/D=$dir")
           if ($code -ne 0) { $problems += "running setup again (update) failed: $code" }
-          $again = Invoke-RestMethod -UseBasicParsing -WebSession (New-Object Microsoft.PowerShell.Commands.WebRequestSession) "http://localhost:3000/api/auth/me"
+          $again = Invoke-RestMethod -UseBasicParsing -WebSession (New-Object Microsoft.PowerShell.Commands.WebRequestSession) "http://127.0.0.1:3000/api/auth/me"
           if ($again.id -ne $me.id) { $problems += "the update lost the existing data" }
 
           # 5. Uninstall (keeping data, the default).
