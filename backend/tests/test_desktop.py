@@ -43,6 +43,16 @@ def test_environment_is_local_and_single_person(tmp_path):
     assert env["CLIPFORGE_COOKIE_SECURE"] == "false"
 
 
+def test_time_zone_data_for_postgresql(tmp_path):
+    share = tmp_path / "share"
+    share.mkdir()
+    assert desktop.ensure_timezones(share) is True
+    zone = share / "timezone"
+    assert (zone / "UTC").read_bytes()[:4] == b"TZif" and (zone / "Europe" / "London").exists()
+    assert not list(zone.rglob("__init__.py")) and not list(zone.rglob("*.tab"))
+    assert desktop.ensure_timezones(share) is False  # already there
+
+
 @pytest.mark.skipif(importlib.util.find_spec("pgserver") is None, reason="pgserver (bundled PostgreSQL) not installed")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="PostgreSQL refuses to run as root")
 def test_full_start_and_stop(tmp_path):

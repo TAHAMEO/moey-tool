@@ -207,6 +207,23 @@ def pg_bin() -> Path:
     return Path(pgserver.__file__).parent / "pginstall" / "bin"
 
 
+def ensure_timezones(pg_share: Path | None = None) -> bool:
+    """PostgreSQL needs its time-zone database (``share/postgresql/timezone``). The Windows build in
+    pgserver ships without it (on Linux it uses the system's), so it is copied in from the
+    ``tzdata`` package: the same standard IANA files. Returns True if it copied them."""
+    target = (pg_share or (pg_bin().parent / "share" / "postgresql")) / "timezone"
+    if target.is_dir() and (target / "UTC").exists():
+        return False
+    if pg_share is None and not WINDOWS:
+        return False
+    import tzdata
+
+    source = Path(tzdata.__file__).parent / "zoneinfo"
+    shutil.copytree(source, target, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__init__.py", "__pycache__", "*.zi", "*.tab", "zones", "leapseconds"))
+    return True
+
+
 def _exe(name: str) -> str:
     return str(pg_bin() / (f"{name}.exe" if WINDOWS else name))
 
@@ -229,6 +246,8 @@ def database_running(layout: Layout) -> bool:
 
 def start_database(layout: Layout, config: dict[str, str]) -> None:
     log = layout.logs / "postgres.log"
+    if ensure_timezones():
+        _log(layout, "installed PostgreSQL's time-zone data")
     if not (layout.pgdata / "PG_VERSION").exists():
         _say("Creating CLIPFORGE's database")
         layout.pgdata.parent.mkdir(parents=True, exist_ok=True)
