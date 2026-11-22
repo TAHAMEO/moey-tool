@@ -42,7 +42,7 @@ class Recipe(BaseModel):
     max_seconds: float | None = Field(None, ge=5, le=900)
     platforms: list[Literal["youtube", "instagram"]] = Field(default_factory=lambda: ["youtube", "instagram"], min_length=1)
     aspects: list[Literal["9:16", "1:1", "16:9"]] | None = None
-    caption_style: Literal["bold_pop", "karaoke_fill", "clean_lower", "boxed"] | None = None
+    caption_style: Literal["bold_pop", "karaoke_fill", "clean_lower", "boxed", "kinetic"] | None = None
     focus: str | None = Field(None, max_length=200)
     #: drafts: just make clips · approve: ask before posting · auto: post without asking
     publish: Literal["drafts", "approve", "auto"] = "approve"

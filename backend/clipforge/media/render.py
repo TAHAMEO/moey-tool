@@ -63,6 +63,12 @@ class EditPlan:
     #: Vertical centre of the text hook (share of the height), kept inside the middle third and
     #: away from the speaker's face (see shorts.hook.text_position).
     hook_text_y: float = 0.42
+    #: Shorts re-hook: more on-screen text lines ({text, start, seconds, y}) and punch-in zoom
+    #: windows ([start, end] on the output timeline).
+    overlays: list[dict] = field(default_factory=list)
+    zoom_windows: list[list[float]] = field(default_factory=list)
+    #: Kinetic captions: power-word scores for this clip (word -> 0-1), see shorts.captions.
+    caption_power: dict[str, float] = field(default_factory=dict)
     removed_silence_s: float = 0.0
     notes: list[str] = field(default_factory=list)
 
@@ -277,9 +283,20 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
             else:
                 parts.append(f"{''.join(alabels)}concat=n={len(alabels)}:v=0:a=1[acat]")
     current = "[vcat]"
+    if has_video:
+        for n, (za, zb) in enumerate(plan.zoom_windows):
+            za, zb = max(0.0, za), min(total, zb)
+            if zb - za < 0.2:
+                continue
+            # A punch-in for this window only: a zoomed copy of these frames laid over the edit.
+            parts.append(f"{current}split=2[zb{n}][zs{n}]")
+            parts.append(f"[zs{n}]trim=start={za:.3f}:end={zb:.3f},setpts=PTS-STARTPTS+{za:.3f}/TB,"
+                         f"crop=iw/{PUNCH_IN}:ih/{PUNCH_IN}:(iw-ow)/2:(ih-oh)/2,scale={out_w}:{out_h}:flags=lanczos,setsar=1[zz{n}]")
+            parts.append(f"[zb{n}][zz{n}]overlay=0:0:eof_action=pass:enable='between(t,{za:.3f},{zb:.3f})'[zo{n}]")
+            current = f"[zo{n}]"
     if still_at is not None:
         t0 = max(0.0, min(still_at, total - 0.25))
-        parts.append("[vcat]split=2[vmain][vstill]")
+        parts.append(f"{current}split=2[vmain][vstill]")
         parts.append(f"[vstill]trim=start={t0:.3f}:duration=0.2,setpts=PTS-STARTPTS[still]")
         current = "[vmain]"
     fade_out_at = max(0.0, total - plan.fade_s - 0.05)
@@ -336,6 +353,15 @@ def add_text_hook(ass_path: Path, text: str, seconds: float, *, width: int, heig
                   y_ratio: float = 0.42) -> Path:
     """Add the frame-one text hook to the clip's .ass file (created if captions are off): big,
     white on a heavy black outline, centred in the middle third, visible from the very first frame."""
+    # One or two words are the thumbnail on Shorts: much bigger than a sentence-long hook.
+    size = 0.11 if len(text.split()) <= 2 else 0.075
+    return add_overlay_text(ass_path, text, 0.0, seconds, width=width, height=height, accent=accent, y_ratio=y_ratio,
+                            max_size_ratio=size)
+
+
+def add_overlay_text(ass_path: Path, text: str, start_s: float, seconds: float, *, width: int, height: int,
+                     accent: str, y_ratio: float = 0.42, fade_in_ms: int = 0, max_size_ratio: float = 0.075) -> Path:
+    """Bold on-screen text (text hook, re-hook) in the middle third, above the caption zone."""
     import pysubs2
 
     subs = pysubs2.load(str(ass_path), encoding="utf-8") if ass_path.exists() else pysubs2.SSAFile()
@@ -345,20 +371,25 @@ def add_text_hook(ass_path: Path, text: str, seconds: float, *, width: int, heig
     style.fontname = "Anton"
     longest = max(len(line) for line in lines)
     # Anton capitals are about half an em wide: fit the longest line into 86 % of the width.
-    style.fontsize = round(min(height * 0.075, width * 0.86 / (longest * 0.5)))
+    style.fontsize = round(min(height * max_size_ratio, width * 0.86 / (longest * 0.5)))
     style.primarycolor = vcaptions.hex_to_ass("#FFFFFF")
     style.secondarycolor = vcaptions.hex_to_ass(accent)
     style.outlinecolor = vcaptions.hex_to_ass("#000000")
     style.backcolor = vcaptions.hex_to_ass("#000000", alpha=120)
     style.bold = True
-    style.outline = round(height / 1920 * 9, 1)
+    style.outline = round(height / 1920 * 9 * max(1.0, style.fontsize / (height * 0.075)), 1)
     style.shadow = round(height / 1920 * 4, 1)
     style.alignment = pysubs2.Alignment.MIDDLE_CENTER
-    subs.styles[HOOK_STYLE] = style
-    x, y = width // 2, round(height * max(0.36, min(0.62, y_ratio)))  # middle third, clear of the captions
+    # One style per size (the text hook and a re-hook line can differ).
+    name = f"{HOOK_STYLE}{style.fontsize}"
+    subs.styles[name] = style
+    # Middle third, and the whole block above the captions (which start about 68 % down).
+    half_block = len(lines) * style.fontsize * 1.2 / 2
+    y = max(0.36 * height, min(0.62 * height, y_ratio * height, 0.68 * height - half_block))
     body = r"\N".join(lines)
-    subs.events.append(pysubs2.SSAEvent(start=0, end=pysubs2.make_time(s=seconds), style=HOOK_STYLE, layer=10,
-                                        text=f"{{\\pos({x},{y})\\fad(0,180)}}{body}"))
+    fade = f"\\fad({fade_in_ms},180)"
+    subs.events.append(pysubs2.SSAEvent(start=pysubs2.make_time(s=start_s), end=pysubs2.make_time(s=start_s + seconds),
+                                        style=name, layer=10, text=f"{{\\pos({width // 2},{round(y)}){fade}}}{body}"))
     subs.save(str(ass_path), encoding="utf-8")
     return ass_path
 
@@ -388,13 +419,28 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
     subtitle_name = None
     cwd = None
     ass_path = None
+    power_words: list[str] = []
     if plan.burn_captions and out_words:
         style = caption_style_for(plan)
-        ass_path = vcaptions.write_ass(workspace / "captions.ass", out_words, style, width=out_w, height=out_h)
+        emphasis = None
+        if style.animation == "kinetic":
+            from ..shorts import captions as scaptions
+
+            scores = plan.caption_power or scaptions.power_scores(" ".join(w.text for w in out_words))
+            emphasis = scaptions.emphasis(scores)
+            for group in vcaptions.group_words(out_words, max_words=style.max_words):
+                power_words += [group.words[i].text for i in emphasis([w.text for w in group.words])]
+        ass_path = vcaptions.write_ass(workspace / "captions.ass", out_words, style, width=out_w, height=out_h,
+                                       emphasis=emphasis)
     if plan.hook_text:
         ass_path = add_text_hook(ass_path or workspace / "captions.ass", plan.hook_text, plan.hook_text_s,
                                  width=out_w, height=out_h, accent=plan.caption_accent or "#FFE500",
                                  y_ratio=plan.hook_text_y)
+    for overlay in plan.overlays:
+        ass_path = add_overlay_text(ass_path or workspace / "captions.ass", overlay["text"], overlay["start"],
+                                    overlay["seconds"], width=out_w, height=out_h,
+                                    accent=plan.caption_accent or "#FFE500", y_ratio=overlay.get("y", 0.42),
+                                    fade_in_ms=120)
     if ass_path is not None:
         cwd, subtitle_name, _fonts = vff.relative_filter_workspace(ass_path, vcaptions.FONT_DIR)
     inputs = ["-ss", f"{plan.clip_start:.4f}", "-t", f"{plan.clip_end - plan.clip_start:.4f}", "-i", str(mezzanine)]
@@ -435,6 +481,9 @@ def render(mezzanine: Path, plan: EditPlan, words: list[dict], out_path: Path, w
         "still": str(still_path) if want_still and still_path.exists() else None,
         "caption_style": plan.caption_style,
         "text_hook": plan.hook_text,
+        "overlays": plan.overlays,
+        "zoom_windows": plan.zoom_windows,
+        "power_words": power_words,
         "music": bool(music_index is not None),
         "watermark": bool(watermark_index is not None),
         "loudness_target": plan.loudness_lufs,

@@ -1,7 +1,8 @@
 # Shorts retention upgrade — plan
 
-Status: **P0 implemented** (hook scorer + reconstruction, loop seam, review hold) — `clipforge/shorts/`,
-switches in Settings → Clips & editing (off until turned on). P1–P3 not started.
+Status: **P0 and P1 implemented** — `clipforge/shorts/`, switches in Settings → Clips & editing
+(all off until turned on). P0: hook scorer + reconstruction, loop seam, review hold. P1: re-hook at
+20–25 s, kinetic captions, clip transcript export, packaging variants. P2–P3 not started.
 
 Owner's decisions (2026-11-22): weak-hook clips are **held for review** (manual publish still
 possible); **no sentence re-ordering** unless "Open on the question" is switched on; **local AI
@@ -17,6 +18,37 @@ What changed while building P0 (found by tests and a real clip):
 - clips no longer fade in from black (frame one was a black frame);
 - the text hook keeps every word in ≤ 3 lines, sized to the width, and sits in the half of the
   middle third away from the speaker's face.
+
+What P1 does (and what was found building it):
+- **Re-hook** (`shorts/retention.py`): exit points are sentence ends on the *edited* timeline
+  between 15 and 30 s where a thought resolves — a concluding line ("that's why…"), a pause after
+  it, a change of topic, or a next line that announces a new point. A topic change alone isn't
+  enough. The best one (closest to 20–25 s) gets a 1.5 s punch-in zoom from the exit point and a
+  text line from 0.6 s before it: a 2–5 word preview of the speaker's *next* line when that reads
+  as a hook, otherwise a neutral framing line ("NOW THE IMPORTANT PART", "STAY FOR THIS ONE") that
+  claims nothing. No sentence is moved. Clips under 20 s get none.
+- **Kinetic captions** (preset `kinetic` in `vendor/autoclip/captions.py`, words in
+  `shorts/captions.py`): up to 3 words per line, 7.4 % of the height, heavy outline; 1 power word
+  per line of ≤ 3 words, 2 for longer (never more than 3) in the accent colour, popping when spoken.
+  Power = numbers, emotional words, hook words, the clip's focus keyword, and words that are rare in
+  the rest of the video (IDF over the source's sentences). Words only said in channel talk
+  ("subscribe", "this video") never light up.
+- **Transcript** (`seo_transcript`): `clipNN_transcript.txt` (one sentence per line) stored with
+  the clip as a `transcript` asset (kept by clean-up, downloadable); the clip's `transcript_text`
+  now follows the final cut.
+- **Packaging** (`shorts/packaging.py`): 2–3 variants ranked by length (30–50), keyword first,
+  curiosity, promise and readability. Titles are the clip's own strongest lines behind the focus
+  keyword ("Pricing: The biggest mistake freelancers make"); the only added words are framing words
+  (why/how/here's). A model-written title is one candidate and is **dropped if it uses a word the
+  speaker never said**. First-frame text: 1–2 words *next to each other* in a strong line ("NEVER
+  COMPETE", "BIGGEST MISTAKE"), shown on frame one at up to 11 % of the height — readable at 200 px
+  wide; it is the thumbnail on Shorts. Description = title + the most keyword-rich run of sentences
+  + hashtags (YouTube: `#shorts` + 2 topic tags; Instagram: up to 4 + `#reels`). The best variant is
+  used; the clip page lists all of them with a one-click "Use".
+- Found on a real clip: ASR mistakes ("number one wanted") make some lines poor title material — the
+  ranking can't know a word was misheard, so the options list matters; channel talk inside a clip
+  was leaking into keywords, highlights and hashtags (now filtered); the first keyword picker chose
+  "raising" over "price" (now counts word forms together and uses "let's talk about …").
 
 ## 1. The pipeline today (from the code)
 
@@ -169,7 +201,10 @@ and per published Short (the Model Hub already meters every paid call per job).
   "loop_seam": true,
   "loop": { "threshold": 0.6, "search_s": 3.0, "bridge_s": [0.2, 0.5] },
   "duration": { "min_s": 12, "prefer_max_s": 30, "max_s": 58, "long_needs_pacing": 0.7 },
-  "rehook": { "enabled": false, "window_s": [20, 25] },
+  "rehook": true, "rehook_from_s": 15, "rehook_to_s": 30, "rehook_min_clip_s": 20,
+  "rehook_zoom": true, "rehook_text": true, "rehook_framing": true,
+  "kinetic_captions": true, "seo_transcript": true,
+  "packaging_variants": true, "title_min_chars": 30, "title_max_chars": 50, "first_frame_words": 2,
   "originality": { "enabled": false, "compare_last": 10, "max_similarity": 0.8 }
 }
 ```
@@ -187,6 +222,15 @@ Clip 2 — "Why your prices scare clients away"        HELD for review
 
 Clip 1 — "Pricing mistake #1"                        PUBLISHED (scheduled 18:00)
   hook 0.78 (runway removed 1.4 s; text hook "PRICE MISTAKE"); loop 0.81
+
+Clip 3 — "Price: Never compete on price"             Waiting for your approval
+  first 3 s 0.76 · loop 0.70 · re-hook at 23.1 s
+    - re-hook at 23.1 s (0.9 s pause after it; the next sentence changes topic)
+    - punch-in zoom 23.1-24.6 s
+    - text "NOW THE IMPORTANT PART" from 22.5 s (framing text (no claim))
+  Title and first-frame options
+    #1 Price: Here is my number one wanted   (35 chars · 98)  On frame one: NEVER COMPETE   In use
+    #2 Price: Never compete on price         (29 chars · 89)  Frame text: NUMBER ONE        [Use]
 ```
 
 Chat ("why was clip 2 held?") and the project page read the same `publish_gate_result`.

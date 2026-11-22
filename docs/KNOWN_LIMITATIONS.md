@@ -69,6 +69,11 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
 
 ## Functional limits
 
+- **Shorts stages work from the transcript.** Re-hook points, power words, titles and first-frame
+  text are chosen by rules over what the speech recogniser heard; a misheard word can end up in a
+  title option (the options list is there so you can pick another). Frame-one text is burned into
+  the video: switching to another option changes the title and description, not frame one, until
+  the clip is re-rendered. No retention data feeds the ranking yet (that is P2).
 - **No cloud speech or vision services**: audio and frames are always processed on your server
   (only text is sent to AI providers), so transcription quality is bounded by the local engines.
 - **Speech recognition**: the bundled Vosk model is English-only, adds no punctuation (CLIPFORGE

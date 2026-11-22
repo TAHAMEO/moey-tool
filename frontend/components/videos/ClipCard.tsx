@@ -83,6 +83,7 @@ export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; o
           )}
 
           <ShortsStatus clip={clip} />
+          <Variants clip={clip} onChanged={onChanged} />
 
           {render && (
             <div className="mt-4 flex flex-wrap gap-2 text-[12px]">
@@ -108,6 +109,7 @@ export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; o
             {render?.video_url && <a href={`${render.video_url}?download=true`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[12px] hover:bg-surface-2"><Download className="size-3.5" /> MP4</a>}
             {render?.srt_url && <a href={`${render.srt_url}?download=true`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[12px] hover:bg-surface-2"><Download className="size-3.5" /> SRT</a>}
             {render?.vtt_url && <a href={`${render.vtt_url}?download=true`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[12px] hover:bg-surface-2"><Download className="size-3.5" /> VTT</a>}
+            {clip.transcript_url && <a href={`${clip.transcript_url}?download=true`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[12px] hover:bg-surface-2"><Download className="size-3.5" /> Transcript</a>}
             {can("editor") && clip.status !== "candidate" && (
               <Button size="sm" variant="ghost" icon={<Scissors className="size-3.5" />} onClick={() => setEditing(!editing)}>Adjust</Button>
             )}
@@ -119,7 +121,7 @@ export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; o
               <div><Label>End (s)</Label><Input inputMode="decimal" value={edit.end} onChange={(e) => setEdit({ ...edit, end: e.target.value })} /></div>
               <div><Label>Captions</Label><Select value={edit.style} onChange={(v) => setEdit({ ...edit, style: v })} options={[
                 { value: "", label: "Keep style" }, { value: "bold_pop", label: "Bold pop" }, { value: "karaoke_fill", label: "Karaoke" },
-                { value: "clean_lower", label: "Clean" }, { value: "boxed", label: "Boxed" }]} /></div>
+                { value: "clean_lower", label: "Clean" }, { value: "boxed", label: "Boxed" }, { value: "kinetic", label: "Kinetic" }]} /></div>
               <div className="flex items-end"><Button size="sm" className="w-full" onClick={rerender}>Re-render</Button></div>
             </div>
           )}
@@ -165,7 +167,8 @@ function ShortsStatus({ clip }: { clip: Clip }) {
   const hook = clip.shorts?.hook;
   const loop = clip.shorts?.loop;
   const gate = clip.shorts?.publish_gate_result;
-  if (!hook && !loop && !gate) return null;
+  const rehook = clip.shorts?.retention_plan;
+  if (!hook && !loop && !gate && !rehook) return null;
   const pct = (v?: number | null) => (v == null ? "–" : Math.round(v * 100));
   return (
     <div className="mt-4 space-y-2 rounded-xl border border-border p-3 text-[12px]">
@@ -177,18 +180,64 @@ function ShortsStatus({ clip }: { clip: Clip }) {
         )}
         {loop && <Badge tone={loop.assessment.loopable ? "success" : "neutral"}>Loop: {pct(clip.loop_score)}{loop.bridged ? " · blended" : ""}</Badge>}
         {gate && <Badge tone={gate.result === "held" ? "warning" : gate.result === "approved" ? "success" : "neutral"}>{GATE_LABEL[gate.result] ?? gate.result}</Badge>}
+        {rehook && <Badge tone={rehook.at != null ? "success" : "neutral"}>{rehook.at != null ? `Re-hook at ${rehook.at.toFixed(1)} s` : "No re-hook"}</Badge>}
       </div>
-      {hook?.text_hook && <p className="text-muted">Text on frame one: <span className="font-semibold text-text">{hook.text_hook}</span></p>}
-      {[...(hook?.changes ?? []), ...(loop?.changes ?? [])].length > 0 && (
+      {(clip.shorts?.first_frame_text ?? hook?.text_hook) && <p className="text-muted">Text on frame one: <span className="font-semibold text-text">{clip.shorts?.first_frame_text ?? hook?.text_hook}</span></p>}
+      {[...(hook?.changes ?? []), ...(loop?.changes ?? []), ...(rehook?.changes ?? [])].length > 0 && (
         <ul className="list-disc space-y-0.5 pl-4 text-muted">
-          {[...(hook?.changes ?? []), ...(loop?.changes ?? [])].map((c) => <li key={c}>{c}</li>)}
+          {[...(hook?.changes ?? []), ...(loop?.changes ?? []), ...(rehook?.changes ?? [])].map((c) => <li key={c}>{c}</li>)}
         </ul>
       )}
+      {rehook?.skipped && <p className="text-faint">Re-hook skipped: {rehook.skipped}</p>}
       {(gate?.result === "held" || hook?.status === "held") && (
         <ul className="list-disc space-y-0.5 pl-4 text-warning">
           {[...new Set([...(gate?.reasons ?? []), ...(hook?.after.reasons ?? [])])].map((r) => <li key={r}>{r}</li>)}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Ranked title / first-frame options; "Use" puts that title, description and hashtags on the
+ *  clip's posts (anything not yet published). */
+function Variants({ clip, onChanged }: { clip: Clip; onChanged: () => void }) {
+  const toast = useToast();
+  const { can } = useAuth();
+  const variants = clip.shorts?.packaging_variants ?? [];
+  if (!variants.length) return null;
+  const yt = clip.packages.find((p) => p.platform === "youtube");
+  const current = yt ? yt.title.replace(/\s*#shorts$/i, "") : null;
+  async function use(v: (typeof variants)[number]) {
+    try {
+      for (const pkg of clip.packages) {
+        if (pkg.status === "published") continue;
+        const body = pkg.platform === "youtube"
+          ? { title: `${v.title} #shorts`.slice(0, 100), description: v.youtube_description }
+          : { caption: v.instagram_caption, hashtags: v.hashtags.instagram };
+        await api(`/packages/${pkg.id}`, { method: "PATCH", body });
+      }
+      toast("success", "Title and description updated.");
+      onChanged();
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "Could not update the posts");
+    }
+  }
+  return (
+    <div className="mt-3 rounded-xl border border-border p-3 text-[12px]">
+      <p className="mb-2 font-medium text-text">Title and first-frame options</p>
+      <ol className="space-y-2">
+        {variants.map((v) => (
+          <li key={v.rank} className="flex flex-wrap items-center gap-2">
+            <span className="text-faint">#{v.rank}</span>
+            <span className="font-semibold text-text">{v.title}</span>
+            <span className="text-faint">({v.title.length} chars · {Math.round(v.score * 100)})</span>
+            {v.first_frame_text && <Badge tone={v.burned ? "success" : "neutral"}>{v.burned ? "On frame one: " : "Frame text: "}{v.first_frame_text}</Badge>}
+            {current === v.title ? <Badge tone="success">In use</Badge>
+              : can("editor") && <Button size="sm" variant="ghost" onClick={() => use(v)}>Use</Button>}
+            {v.reasons.length > 0 && <span className="w-full pl-6 text-faint">{v.reasons.join("; ")}</span>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

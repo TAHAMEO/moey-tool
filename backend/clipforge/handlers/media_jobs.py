@@ -364,7 +364,8 @@ def render_job(ctx: JobContext) -> dict:
         plan = render.plan_edits(start, end, silences, words,
                                  remove_silences=options.get("remove_silences", clips_cfg.remove_silences),
                                  min_silence_s=clips_cfg.min_silence_to_cut_s, aspect=aspect,
-                                 caption_style=options.get("caption_style") or project.request.get("caption_style") or clips_cfg.caption_style,
+                                 caption_style=options.get("caption_style") or ("kinetic" if shorts_cfg.kinetic_captions else None)
+                                 or project.request.get("caption_style") or clips_cfg.caption_style,
                                  burn_captions=options.get("burn_captions", project.request.get("burn_captions", clips_cfg.burn_captions)),
                                  punch_in=clips_cfg.punch_in_zoom, loudness_lufs=clips_cfg.loudness_lufs,
                                  music=options.get("music_path"), music_db=clips_cfg.music_volume_db,
@@ -372,6 +373,9 @@ def render_job(ctx: JobContext) -> dict:
                                  caption_accent=brand.accent_color, **shorts_plan["plan_options"])
         if shorts_plan.get("reorder"):
             plan.keep = reorder_keep(plan.keep, shorts_plan["reorder"])
+        if shorts_cfg.rehook:
+            visual = analyses.get("visual") if isinstance(analyses.get("visual"), list) else []
+            shorts_plan["record"]["retention_plan"] = apply_rehook(plan, words, shorts_cfg, visual=visual, seed=str(clip_id))
         slug = f"clip{rank:02d}_{aspect.replace(':', 'x')}"
         base_key = f"projects/{project_id}/clips/{clip_id}"
         video_key = f"{base_key}/{slug}.mp4"
@@ -400,6 +404,9 @@ def render_job(ctx: JobContext) -> dict:
         srt_key, vtt_key = f"{base_key}/{slug}.srt", f"{base_key}/{slug}.vtt"
         _commit(srt_key, srt_path)
         _commit(vtt_key, vtt_path)
+        if shorts_cfg.seo_transcript and "seo" not in shorts_plan["record"]:
+            shorts_plan["record"]["seo"] = export_transcript(decisions["words"], f"{base_key}/clip{rank:02d}_transcript.txt",
+                                                             project_id=project_id)
         # Cover: the clean (caption-free) still written by the render pass, so the
         # hook text is never stacked on top of burned-in captions.
         frame = Path(decisions["still"]) if decisions.get("still") else \
@@ -452,6 +459,8 @@ def render_job(ctx: JobContext) -> dict:
             if (start, end) != (clip.start_s, clip.end_s):
                 clip.shorts["original_bounds"] = clip.shorts.get("original_bounds") or [clip.start_s, clip.end_s]
                 clip.start_s, clip.end_s = start, end
+                spoken = " ".join(w["text"] for w in words if w["end"] > start + 1e-6 and w["start"] < end - 1e-6)
+                clip.transcript_text = spoken or clip.transcript_text
     shutil.rmtree(work, ignore_errors=True)
     return {"renders": results, "hook": (shorts_plan["record"].get("hook") or {}).get("status")}
 
@@ -489,7 +498,69 @@ def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *,
         out["end"] = plan.end
         out["record"]["loop"] = plan.to_dict()
         out["plan_options"]["fade_out"] = False  # a loop must not end in black
+    span_text = " ".join(w["text"] for w in words if w["end"] > out["start"] + 1e-6 and w["start"] < out["end"] - 1e-6)
+    if cfg.kinetic_captions and span_text:
+        from ..shorts import captions as scaptions
+
+        out["plan_options"]["caption_power"] = scaptions.power_scores(span_text, idf=scaptions.source_idf(words))
+    if cfg.packaging_variants and span_text:
+        from ..shorts import packaging as spack
+
+        frames = spack.first_frame_texts(span_text, spack.PackagingConfig(first_frame_words=cfg.first_frame_words))
+        out["record"]["first_frame_texts"] = frames
+        if cfg.text_hook and frames:
+            # The first frame is the thumbnail on Shorts: 1-2 big words, made from the clip's own words.
+            visual = analyses.get("visual") if isinstance(analyses.get("visual"), list) else []
+            out["plan_options"].update(hook_text=frames[0], hook_text_s=cfg.text_hook_seconds,
+                                       hook_text_y=shook.text_position(visual, out["start"]), fade_in=False)
+            out["record"]["first_frame_text"] = frames[0]
+            hook = out["record"].get("hook")
+            if hook is not None:
+                scenes = analyses.get("scenes") if isinstance(analyses.get("scenes"), list) else []
+                after = shook.score_opening(words, out["start"], out["end"], visual=visual, scenes=scenes,
+                                            has_video=has_video, text_hook=frames[0],
+                                            cfg=shook.HookConfig(threshold=cfg.hook_threshold,
+                                                                 max_first_line_s=cfg.max_first_line_s))
+                hook.update(text_hook=frames[0], after=after.to_dict())
     return out
+
+
+def apply_rehook(plan, words: list[dict], cfg, *, visual: list, seed: str) -> dict:
+    """Add the re-hook (punch-in zoom and a text line before the exit point) to an edit plan;
+    returns the retention plan that is stored on the clip."""
+    from ..shorts import hook as shook
+    from ..shorts import retention as sret
+
+    out_words = [{"text": w.text, "start": w.start, "end": w.end} for w in render.remap_words(words, plan.keep)]
+    rcfg = sret.RehookConfig(window_s=(cfg.rehook_from_s, cfg.rehook_to_s), min_clip_s=cfg.rehook_min_clip_s,
+                             zoom=cfg.rehook_zoom, text=cfg.rehook_text, framing=cfg.rehook_framing)
+    rplan = sret.plan_rehook(out_words, plan.output_duration, cfg=rcfg, seed=seed)
+    if rplan.zoom:
+        plan.zoom_windows.append(list(rplan.zoom))
+    if rplan.text:
+        y = shook.text_position(visual, sret.source_time(plan.keep, rplan.text_start or 0.0))
+        plan.overlays.append({"text": rplan.text, "start": rplan.text_start, "seconds": rplan.text_seconds, "y": y})
+    return rplan.to_dict()
+
+
+def export_transcript(words: list[dict], key: str, *, project_id) -> dict:
+    """The clip's full spoken transcript as plain text (one sentence per line), kept with the clip
+    for search, titles and descriptions."""
+    from ..media import textutils as tu
+    from ..shorts import packaging as spack
+
+    lines = [s.text.strip() for s in tu.sentences(words)]
+    text = "\n".join(lines) + "\n"
+    path = _writable(key)
+    path.write_text(text, encoding="utf-8")
+    _commit(key, path)
+    with session_scope() as db:
+        asset = _asset(db, kind="transcript", key=key, project_id=project_id, mime="text/plain", path=path,
+                       info={"format": "txt", "words": len(words)})
+        asset_id = str(asset.id)
+    joined = " ".join(lines)
+    return {"transcript_asset_id": asset_id, "transcript_key": key, "words": len(words),
+            "keyword": spack.focus_keyword(joined), "keywords": tu.keywords(spack.content_text(joined), top_k=8)}
 
 
 def reorder_keep(keep: list[tuple[float, float]], outline: list[tuple[float, float]]) -> list[tuple[float, float]]:

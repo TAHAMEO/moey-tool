@@ -77,7 +77,7 @@ class ClipSettings(_Section):
     min_seconds: float = Field(15, ge=3, le=180)
     max_seconds: float = Field(59, ge=5, le=900)
     aspects: list[Literal["9:16", "1:1", "16:9"]] = Field(default_factory=lambda: ["9:16"])
-    caption_style: Literal["bold_pop", "karaoke_fill", "clean_lower", "boxed"] = "bold_pop"
+    caption_style: Literal["bold_pop", "karaoke_fill", "clean_lower", "boxed", "kinetic"] = "bold_pop"
     burn_captions: bool = True
     languages: list[str] = Field(default_factory=lambda: ["en"])
     remove_silences: bool = True
@@ -107,6 +107,20 @@ class ShortsSettings(_Section):
     prefer_max_s: float = Field(30, ge=10, le=90)
     max_s: float = Field(58, ge=15, le=180)
     min_s: float = Field(12, ge=3, le=60)
+    # P1 — retention inside the clip
+    rehook: bool = False               # pattern interrupt (zoom + text) where a thought resolves, 20-25 s
+    rehook_from_s: float = Field(15, ge=5, le=60)
+    rehook_to_s: float = Field(30, ge=10, le=90)
+    rehook_min_clip_s: float = Field(20, ge=10, le=120)
+    rehook_zoom: bool = True
+    rehook_text: bool = True
+    rehook_framing: bool = True        # framing line ("NOW THE IMPORTANT PART") when the next line isn't a hook
+    kinetic_captions: bool = False     # phrase-by-phrase captions; 1-3 power words per line pop
+    seo_transcript: bool = False       # export the clip's full spoken transcript (.txt) next to SRT/VTT
+    packaging_variants: bool = False   # 2-3 ranked title / first-frame text variants; the best one is used
+    title_min_chars: int = Field(30, ge=10, le=90)
+    title_max_chars: int = Field(50, ge=20, le=95)
+    first_frame_words: int = Field(2, ge=1, le=5)
 
 
 class BrandSettings(_Section):

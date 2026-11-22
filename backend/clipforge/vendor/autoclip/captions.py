@@ -146,6 +146,25 @@ PRESETS: dict[str, CaptionStyle] = {
         animation="none",
         max_words=8,
     ),
+    # CLIPFORGE: phrase-by-phrase Shorts captions; power words (chosen by the caller, see
+    # clipforge/shorts/captions.py) are coloured and enlarged, and pop when spoken.
+    "kinetic": CaptionStyle(
+        key="kinetic",
+        label="Kinetic",
+        description="Large phrase-by-phrase captions; 1-3 power words per line pop in colour.",
+        font="Anton",
+        font_file="Anton-Regular.ttf",
+        size_ratio=0.074,
+        primary="#FFFFFF",
+        accent="#FFE500",
+        outline_width=7.0,
+        shadow=2.0,
+        all_caps=True,
+        margin_v_ratio=0.22,
+        animation="kinetic",
+        scale_percent=128,
+        max_words=3,
+    ),
     "boxed": CaptionStyle(
         key="boxed",
         label="Boxed",
@@ -248,8 +267,11 @@ def build_ass(
     width: int,
     height: int,
     time_offset_s: float = 0.0,
+    emphasis=None,
 ) -> pysubs2.SSAFile:
     """Build an ASS subtitle file for a clip.
+
+    ``emphasis`` (kinetic style): ``f(tokens) -> indices`` of the power words of one line.
 
     ``time_offset_s`` is subtracted from every timestamp, so absolute transcript
     times become clip-relative ones.
@@ -269,7 +291,10 @@ def build_ass(
     groups = group_words(words, max_words=style.max_words)
 
     for group in groups:
-        if style.animation == "karaoke":
+        if style.animation == "kinetic":
+            power = emphasis([w.text for w in group.words]) if emphasis else []
+            subs.events.extend(_kinetic_events(group, style, time_offset_s, set(power)))
+        elif style.animation == "karaoke":
             subs.events.append(_karaoke_event(group, style, time_offset_s))
         elif style.animation == "scale" and style.accent:
             subs.events.extend(_per_word_events(group, style, time_offset_s))
@@ -367,6 +392,31 @@ def _per_word_events(
     return events
 
 
+def _kinetic_events(
+    group: CaptionGroup, style: CaptionStyle, offset: float, power: set[int]
+) -> list[pysubs2.SSAEvent]:
+    """CLIPFORGE: one event per word. Power words stay in the accent colour, slightly larger,
+    for the whole line, and pop to full size while they are spoken."""
+    accent = f"\\c{ass_colour_override(style.accent or style.primary)}"
+    rest = (style.scale_percent + 100) // 2
+    events: list[pysubs2.SSAEvent] = []
+    for active, word in enumerate(group.words):
+        rendered: list[str] = []
+        for index, other in enumerate(group.words):
+            text = _text_of(other, style)
+            if index in power and index == active:
+                tags = f"{accent}\\fscx{rest}\\fscy{rest}\\t(0,90,\\fscx{style.scale_percent}\\fscy{style.scale_percent})"
+                rendered.append(f"{{{tags}}}{text}{{\\r}}")
+            elif index in power:
+                rendered.append(f"{{{accent}\\fscx{rest}\\fscy{rest}}}{text}{{\\r}}")
+            else:
+                rendered.append(text)
+        end = word.end if active + 1 < len(group.words) else group.end
+        next_start = group.words[active + 1].start if active + 1 < len(group.words) else end
+        events.append(_event(word.start, max(end, next_start), " ".join(rendered), offset))
+    return events
+
+
 def write_ass(
     path: Path,
     words: list[Word],
@@ -375,9 +425,10 @@ def write_ass(
     width: int,
     height: int,
     time_offset_s: float = 0.0,
+    emphasis=None,
 ) -> Path:
     """Render captions to an .ass file and return its path."""
-    subs = build_ass(words, style, width=width, height=height, time_offset_s=time_offset_s)
+    subs = build_ass(words, style, width=width, height=height, time_offset_s=time_offset_s, emphasis=emphasis)
     path.parent.mkdir(parents=True, exist_ok=True)
     subs.save(str(path), encoding="utf-8")
     return path

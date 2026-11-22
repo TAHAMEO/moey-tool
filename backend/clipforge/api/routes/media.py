@@ -15,7 +15,7 @@ from ..deps import Principal, viewer
 
 router = APIRouter(tags=["media"])
 
-SERVABLE = {"clip", "thumbnail", "subtitle", "upload", "library"}
+SERVABLE = {"clip", "thumbnail", "subtitle", "transcript", "upload", "library"}
 
 
 @router.get("/media/{asset_id}")

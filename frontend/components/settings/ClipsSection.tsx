@@ -10,6 +10,7 @@ const CAPTION_STYLES: { value: ClipSettings["caption_style"]; label: string }[] 
   { value: "karaoke_fill", label: "Karaoke — words fill in as they're spoken" },
   { value: "clean_lower", label: "Clean — understated lower captions" },
   { value: "boxed", label: "Boxed — text on a solid band" },
+  { value: "kinetic", label: "Kinetic — big phrase-by-phrase, power words pop" },
 ];
 
 export function ClipsSection({ settings, save, editable }: SectionProps) {
@@ -135,6 +136,41 @@ function ShortsRows({ settings, save, editable }: SectionProps) {
           <NumberField label="Never shorter than" value={s.min_s} min={3} max={60} suffix="sec" disabled={!editable} onCommit={(v) => set({ min_s: v })} />
           <NumberField label="Never longer than" value={s.max_s} min={15} max={180} suffix="sec" disabled={!editable} onCommit={(v) => set({ max_s: v })} />
         </div>
+      </Row>
+      <Row className="space-y-4">
+        <Label>Shorts: keep them watching</Label>
+        <Toggle checked={s.rehook} disabled={!editable} onChange={(v) => set({ rehook: v })}
+          label="Re-hook at 20–25 seconds" description="Where a thought finishes (the moment people swipe), a quick zoom and a text line: a preview of the speaker's next line, or a neutral line like “Now the important part”. Clips under 20 s are left alone." />
+        {s.rehook && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <NumberField label="Look from" value={s.rehook_from_s} min={5} max={60} suffix="sec" disabled={!editable} onCommit={(v) => set({ rehook_from_s: v })} />
+            <NumberField label="Look until" value={s.rehook_to_s} min={10} max={90} suffix="sec" disabled={!editable} onCommit={(v) => set({ rehook_to_s: v })} />
+            <NumberField label="Only clips longer than" value={s.rehook_min_clip_s} min={10} max={120} suffix="sec" disabled={!editable} onCommit={(v) => set({ rehook_min_clip_s: v })} />
+          </div>
+        )}
+        {s.rehook && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Toggle checked={s.rehook_zoom} disabled={!editable} onChange={(v) => set({ rehook_zoom: v })} label="Zoom" />
+            <Toggle checked={s.rehook_text} disabled={!editable} onChange={(v) => set({ rehook_text: v })} label="Text line" />
+            <Toggle checked={s.rehook_framing} disabled={!editable || !s.rehook_text} onChange={(v) => set({ rehook_framing: v })} label="Neutral line when needed" />
+          </div>
+        )}
+        <Toggle checked={s.kinetic_captions} disabled={!editable} onChange={(v) => set({ kinetic_captions: v })}
+          label="Kinetic captions" description="Large, high-contrast captions a few words at a time; 1–3 power words per line (numbers, the topic, strong words) light up and pop as they're said. Replaces the caption style above for new clips." />
+        <Toggle checked={s.seo_transcript} disabled={!editable} onChange={(v) => set({ seo_transcript: v })}
+          label="Save each clip's transcript" description="A .txt of everything said in the clip, kept next to the SRT and VTT for search, titles and descriptions." />
+      </Row>
+      <Row className="space-y-4">
+        <Label>Shorts: titles and first frame</Label>
+        <Toggle checked={s.packaging_variants} disabled={!editable} onChange={(v) => set({ packaging_variants: v })}
+          label="Make 2–3 title and first-frame options" description="Titles keyword first, then the promise, built from what was said; 1–2 big words on frame one (the thumbnail on Shorts); a description with the most keyword-rich part of the transcript; hashtags per platform. The best one is used — switch with one click on each clip." />
+        {s.packaging_variants && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <NumberField label="Title at least" value={s.title_min_chars} min={10} max={90} suffix="chars" disabled={!editable} onCommit={(v) => set({ title_min_chars: v })} />
+            <NumberField label="Title at most" value={s.title_max_chars} min={20} max={95} suffix="chars" disabled={!editable} onCommit={(v) => set({ title_max_chars: v })} />
+            <NumberField label="Words on frame one" value={s.first_frame_words} min={1} max={5} disabled={!editable} onCommit={(v) => set({ first_frame_words: v })} />
+          </div>
+        )}
       </Row>
     </>
   );

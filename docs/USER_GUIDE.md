@@ -174,7 +174,7 @@ titles come from templates.
 | Publishing | Ask me first / Publish automatically / Drafts only; platforms; time zone; late-post limit; daily limits; YouTube visibility, playlist, caption track; Instagram feed sharing; made-for-kids |
 | Accounts | Connect or disconnect YouTube, Instagram and Google Drive with one click (sign-in on the platform's own page in a pop-up); a guided one-time set-up if this copy doesn't have its Google/Instagram app built in |
 | Sources | Download public YouTube/Instagram videos (on/off) |
-| Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music |
+| Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music; **Shorts** switches (all off until you turn them on): score and fix the first 3 seconds, hold weak openings for review, make clips loop, re-hook at 20–25 s, kinetic captions, save each clip's transcript, 2–3 title and first-frame options |
 | Brand | Channel name, accent colour (highlighted caption word), watermark and its position |
 | Live streams | Create live sessions and get the SRT address for OBS |
 | Media library | Music, sound effects, B-roll, logos and original masters — only files you confirm you have the rights to |
@@ -182,6 +182,25 @@ titles come from templates.
 | Account & security | Password, people and roles (owner), activity log (admins) |
 | Your data | Export everything, export memory, back up now, delete all content (owner) |
 | Advanced | Technical details and system diagnostics |
+
+### Shorts: what each switch does
+
+- **Score the first 3 seconds / Fix weak openings / Hold for review** — cuts greetings and slow
+  starts, lands the first line within 1.5 s, puts bold text from the clip's own words on frame one;
+  a clip whose opening stays weak is never published automatically.
+- **Make clips loop** — ends on a sentence that flows back into the start, or blends the last
+  frames into the first.
+- **Re-hook at 20–25 seconds** — where a thought finishes (the moment people swipe away), a quick
+  zoom and a text line: a preview of the speaker's next line, or a neutral line such as "Now the
+  important part". Nothing is moved and nothing is claimed that wasn't said.
+- **Kinetic captions** — big captions a few words at a time; the strongest 1–3 words of each line
+  (numbers, the topic, strong words) light up in your accent colour and pop as they're said.
+- **Save each clip's transcript** — a "Transcript" (.txt) download on each clip, kept with it.
+- **Make 2–3 title and first-frame options** — each clip lists its options, best first (title
+  30–50 characters, keyword first; 1–2 big words on frame one; description; hashtags). The best is
+  used; press **Use** on another to switch the title, description and hashtags of posts that
+  haven't gone out yet. The words on frame one are part of the video, so they change only when the
+  clip is re-rendered.
 
 ## Live streams
 

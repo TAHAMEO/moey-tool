@@ -38,7 +38,7 @@ class ClipEdit(BaseModel):
     start_s: float | None = Field(None, ge=0)
     end_s: float | None = Field(None, gt=0)
     title: str | None = Field(None, max_length=300)
-    caption_style: str | None = Field(None, pattern="^(bold_pop|karaoke_fill|clean_lower|boxed)$")
+    caption_style: str | None = Field(None, pattern="^(bold_pop|karaoke_fill|clean_lower|boxed|kinetic)$")
     burn_captions: bool | None = None
     rerender: bool = True
 
@@ -133,7 +133,8 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
                           "title": clip.title, "hook": clip.hook, "transcript": clip.transcript_text, "scores": clip.scores,
                           "total_score": clip.total_score, "reasons": clip.reasons, "status": clip.status,
                           "scoring_method": clip.scoring_method, "renders": renders, "packages": packages,
-                          "hook_score": clip.hook_score, "loop_score": clip.loop_score, "shorts": clip.shorts or {}})
+                          "hook_score": clip.hook_score, "loop_score": clip.loop_score, "shorts": clip.shorts or {},
+                          "transcript_url": _asset_url(((clip.shorts or {}).get("seo") or {}).get("transcript_asset_id"))})
     jobs = db.execute(select(Job).where(Job.project_id == project.id, Job.parent_id.is_(None)).order_by(Job.created_at)).scalars()
     return {**_project_summary(db, project), "instruction": project.instruction, "request": project.request,
             "limitations": project.limitations, "errors": project.errors,

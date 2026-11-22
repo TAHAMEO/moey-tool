@@ -290,6 +290,7 @@ def package_node(state: VideoState, config) -> VideoState:
         source = db.get(Source, project.source_id)
         brand = app_settings.get_section(db, "brand")
         publishing = app_settings.get_section(db, "publishing")
+        shorts_cfg = app_settings.get_section(db, "shorts")
         platforms = project.request.get("platforms") or publishing.platforms
         owned = bool((source.access_detail or {}).get("owned")) or source.platform in ("upload", "gdrive")
         clips = db.execute(select(Clip).where(Clip.project_id == project.id).order_by(Clip.rank)).scalars().all()
@@ -302,8 +303,10 @@ def package_node(state: VideoState, config) -> VideoState:
                                      source_title=(source.source_metadata or {}).get("title"),
                                      source_url=source.normalized_url, owned_source=owned, llm_title=clip.title or None,
                                      job_id=ctx.job_id, project_id=project.id, allow_llm=True)  # hub enforces paid-API policy/budgets
+            variants = _packaging_variants(clip, copy, shorts_cfg, brand.channel_name,
+                                           credit=_credit(source, owned)) if shorts_cfg.packaging_variants else []
             if not clip.title:
-                clip.title = copy.youtube_title.replace(" #shorts", "")
+                clip.title = variants[0].title if variants else copy.youtube_title.replace(" #shorts", "")
             yt_thumb = db.execute(select(MediaAsset).where(MediaAsset.project_id == project.id, MediaAsset.kind == "thumbnail",
                                                            MediaAsset.info["clip_id"].astext == str(clip.id))).scalars().first()
             for platform in platforms:
@@ -325,6 +328,9 @@ def package_node(state: VideoState, config) -> VideoState:
                     package.caption = copy.instagram_caption
                     package.hashtags = copy.instagram_hashtags
                     package.cover_asset_id = vertical.thumbnail_asset_id
+                if variants:
+                    apply_variant(package, variants[0].to_dict())
+                    package.metadata_method = f"variant:{variants[0].template}"
                 package.status = "ready"
                 db.flush()
                 hook = (clip.shorts or {}).get("hook") or {}
@@ -339,6 +345,41 @@ def package_node(state: VideoState, config) -> VideoState:
         project.status_label = "Clips ready"
         project.analysis_level = "full_media"
     return {"packages": packages}
+
+
+def _credit(source, owned: bool) -> str:
+    if owned or not source.normalized_url:
+        return ""
+    return f"\n\nSource: {(source.source_metadata or {}).get('title') or 'original video'} — {source.normalized_url}"
+
+
+def _packaging_variants(clip, copy, cfg, channel: str, *, credit: str) -> list:
+    """2-3 ranked title / first-frame variants for a clip (stored on the clip); the best is used."""
+    from ..shorts import packaging as spack
+
+    pcfg = spack.PackagingConfig(title_min=cfg.title_min_chars, title_max=cfg.title_max_chars,
+                                 first_frame_words=cfg.first_frame_words)
+    shorts = dict(clip.shorts or {})
+    variants = spack.build(clip.transcript_text or "", llm_title=copy.youtube_title, channel=channel, cfg=pcfg,
+                           first_frames=shorts.get("first_frame_texts"),
+                           burned=shorts.get("first_frame_text"))
+    for v in variants:
+        v.youtube_description = metadata.youtube_safe(v.youtube_description + credit)[:metadata.YT_DESCRIPTION_MAX]
+        v.instagram_caption = (v.instagram_caption + credit)[:metadata.IG_CAPTION_MAX]
+    clip.shorts = {**shorts, "packaging_variants": [v.to_dict() for v in variants]}
+    return variants
+
+
+def apply_variant(package, variant: dict) -> None:
+    """Put a packaging variant's title, description and hashtags on a package."""
+    md = metadata
+    if package.platform == "youtube":
+        title = md.youtube_safe(variant["title"])
+        package.title = (title + " #shorts") if len(title) <= md.YT_TITLE_MAX - 8 else title[:md.YT_TITLE_MAX]
+        package.description = variant["youtube_description"]
+    else:
+        package.caption = variant["instagram_caption"][:md.IG_CAPTION_MAX]
+        package.hashtags = variant["hashtags"]["instagram"]
 
 
 def _requested_schedule(state: VideoState, packages: list[dict], approved: list[str], config) -> tuple[list[str], list[str]]:

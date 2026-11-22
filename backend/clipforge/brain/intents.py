@@ -161,7 +161,7 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
         if not re.search(r"(youtube|instagram|http|www\.)", candidate, re.IGNORECASE) and len(candidate.split()) <= 8:
             focus = candidate
     caption_style = None
-    for style, pattern in (("karaoke_fill", r"karaoke"), ("boxed", r"boxed|box(ed)? captions"),
+    for style, pattern in (("kinetic", r"kinetic|animated captions"), ("karaoke_fill", r"karaoke"), ("boxed", r"boxed|box(ed)? captions"),
                            ("clean_lower", r"clean|minimal|lower[- ]third"), ("bold_pop", r"bold|pop|big captions")):
         if re.search(pattern, lower) and re.search(r"caption|subtitle", lower):
             caption_style = style
@@ -246,7 +246,7 @@ def extract_preferences(text: str) -> dict:
     count = _count(text or "")
     if count:
         prefs["default_count"] = count
-    for style, pattern in (("karaoke_fill", r"karaoke"), ("boxed", r"boxed"), ("clean_lower", r"clean|minimal|lower[- ]third"),
+    for style, pattern in (("kinetic", r"kinetic"), ("karaoke_fill", r"karaoke"), ("boxed", r"boxed"), ("clean_lower", r"clean|minimal|lower[- ]third"),
                            ("bold_pop", r"\bbold\b|\bpop\b|big captions")):
         if re.search(pattern, lower) and re.search(r"caption|subtitle", lower):
             prefs["caption_style"] = style
