@@ -1,0 +1,214 @@
+# Shorts retention upgrade — plan
+
+Status: **proposal, nothing implemented yet.** P0 waits for the owner's answers to the questions at
+the end (two of them change publishing behaviour).
+
+## 1. The pipeline today (from the code)
+
+A project runs as one LangGraph workflow, `handlers/video_workflow.py :: graph()`:
+
+```
+resolve_node → acquire_node → prepare_node → transcribe_analyze_node → select_node
+            → render_node (one media.render child job per clip) → package_node
+            → publish_gate_node → publish_node → finalize_node
+```
+
+| Stage | Where | What it does now |
+|---|---|---|
+| Transcription | `media/transcription.py` — `select_engine()`, `WhisperXEngine` / `FasterWhisperEngine` / `VoskEngine`, `restore_punctuation()`; job `handlers/media_jobs.py :: transcribe_job()` | Word-level timestamps, kept per source (`load_words()`). |
+| Signals | `media/analysis.py` — `detect_scenes()`, `visual_features()` (sharpness, brightness, faces at 2 fps), `audio_events()` (YAMNet), `audio_profile()` (levels, silences); job `analyze_job()` | Per-source analysis JSON (`load_analysis()`). |
+| Moment selection | `media/highlights.py` — `generate()` builds sentence windows, `_window()` scores 10 dimensions, `select()`, optional `llm_rerank()`, `padded_bounds()`; called from `select_node()` | One `hook` score from the **first sentence's words only** (hook phrases, question, number, length, filler start). Weighted total decides. No look at the first frame, timing of the first line, or what is on screen. |
+| Edit plan | `media/render.py :: plan_edits()` | Removes internal silences > 0.7 s and filler asides (`_filler_sentence_cuts`). Does **not** trim the opening runway beyond `padded_bounds`. |
+| Reframe + render | `render.py :: crop_path_for()`, `build_filtergraph()`, `render()`, `quality_check()`; vendored `vendor/autoclip/reframe` | 9:16 crop following faces, punch-in, loudnorm, fades. |
+| Captions | `vendor/autoclip/captions.py` (styles `bold_pop`, `karaoke_fill`, `clean_lower`, `boxed`; `build_ass()`), `render.py :: caption_style_for()`; SRT/VTT via `media/subtitles.py :: build_cues()`, `validate()` | Word-highlight captions exist (`bold_pop`), but the highlight follows the *spoken* word, not *power* words. SRT is uploaded to YouTube. |
+| Cover | `media/thumbnails.py :: best_frame_time()`, `cover_text()`, `compose()` | A separate cover image with hook text. Shorts feeds don't show it; **frame 1 of the video has no text hook.** |
+| Packaging | `media/metadata.py :: generate()` (LLM via Model Hub, else `local_copy()`); written in `package_node()` | One title/description/tags per platform. No variants, no title-length rule, no ranking. |
+| Publish gate | `video_workflow.py :: publish_gate_node()` | Blocks on QC failure, caption review words and third-party sources; otherwise policy decides (auto / approval / draft only). Knows nothing about hook or originality. |
+| Publishing | `publishing/service.py :: publish_youtube()`, `publish_instagram()`; scheduling in `publishing/schedule.py` | Unchanged by this plan. |
+| Analytics | `analytics/collect.py :: _youtube()` (views, minutes, avg view duration/percentage, likes, comments, shares, subs), `_instagram()`; snapshots at +1 h, 24 h, 72 h, 7 d, 28 d (`publish_jobs`) | Aggregates only. No retention curve, no first-seconds retention, no swipe-away, no CSV import. |
+| Learning | `analytics/compare.py :: dataset()`, `learning/engine.py :: analyze()`, `DIMENSIONS` | Compares view counts across a few dimensions (e.g. `_hook_has_number`) and nudges `highlights` weights. |
+| Clip metadata | `db/models.py :: Clip` (`scores`, `features`, `edit_plan`, `reasons`, `status`) | No hook/loop/originality/gate fields. |
+
+## 2. Target pipeline
+
+```
+transcribe → segment → score moments → HOOK score/reconstruct → retention plan (re-hook)
+  → render vertical → kinetic captions → LOOP-SEAM check → PACKAGING variants
+  → ORIGINALITY check → publish gate → publish → analytics ingest (incl. first hour)
+```
+
+New stages are modules under `backend/clipforge/shorts/` and run inside the existing graph — no new
+service, no new queue:
+
+| New module | Called from | Feature flag (Settings → Clips, `clips.*`) |
+|---|---|---|
+| `shorts/hook.py` — `score_opening()`, `reconstruct()` | after `highlights.select()` in `select_node()`; before `plan_edits()` in `render_job()` | `hook_scorer`, `hook_reconstruct` |
+| `shorts/loop.py` — `seam_score()`, `adjust_for_loop()` | `render_job()` (plan) and after render (verify on frames) | `loop_seam` |
+| `shorts/retention.py` — `exit_points()`, `plan_rehooks()` | `render_job()` | `rehook` (P1) |
+| `shorts/captions.py` — power-word highlighting for `vendor/autoclip/captions` | `render.py :: build_filtergraph()` | `kinetic_captions` (P1) |
+| `shorts/packaging.py` — variants + ranking | `package_node()` | `packaging_variants` (P1) |
+| `shorts/originality.py` — similarity vs last N published | `publish_gate_node()` | `originality_gate` (P2) |
+| `analytics/retention.py` + CSV import | `analytics_jobs`, `/api/analytics/import` | `first_hour_loop` (P2) |
+
+Every flag defaults **off** for existing projects until you switch it on, so current commands and
+results stay exactly as they are.
+
+## 3. Phases
+
+### P0 — first 3 seconds + loop (this plan's first code change)
+
+**P0.1 Hook scorer** (`shorts/hook.py :: score_opening(clip, words, analysis, mezzanine)`), five
+sub-scores 0–1, all from data the pipeline already has:
+
+| Sub-score | Computed from |
+|---|---|
+| `frame_one_clarity` | `analysis.visual` samples in the first 0.5 s: sharpness, brightness, face present/centred; scene cut inside the first 0.3 s counts against |
+| `text_hook` | strength of the candidate on-screen text (see reconstruction) — hook phrases, specificity, numbers, ≤ 2–5 words |
+| `spoken_hook_timing` | time from clip start to the first non-filler word; 1.0 at ≤ 0.5 s, 0 at ≥ 3 s |
+| `curiosity_gap` | first line opens a question/claim/conflict ("why", "the mistake", "nobody tells you", contrast words) **and** the answer is not in the first 3 s (answer markers: "because", "the answer is", resolution sentence) |
+| `swipe_risk` (inverted) | filler/greeting at start ("hey guys", "so", "um"), silence or music-only first second, logo/intro (static frames + no speech), slow pan (low motion + no face) |
+
+`hook_score = weighted mean` (weights in config). Stored on the clip with the reasons.
+
+**P0.2 Hook reconstruction** (`reconstruct()`), only when `hook_score < hook.threshold`:
+1. **Runway removal**: move the clip start to the strongest opening inside the first ~8 s — the
+   first sentence that scores best on the spoken-hook rules — dropping greetings, filler, silence,
+   intros/logos and slow pans before it. Never cut mid-word (word timestamps), never past the
+   point where the clip would fall below `duration.min_s`.
+2. **First line ≤ 1.5 s**: if speech still starts later than 1.5 s, trim the leading silence to
+   0.15 s.
+3. **Frame-one text hook**: 1–5 words, bold, middle third of the frame, readable at ~200 px wide,
+   on screen for the first ~1.5 s (burned into the render, separate from captions). Text comes
+   **only from the clip's own words** (a shortened form of its strongest line or question) — with
+   an LLM if allowed, else a local rule set; any LLM output is checked so every content word appears
+   in the transcript.
+4. **Tension first** (opt-in, see question 2): if the premise resolves in the first 3 s and a
+   question/setup sentence exists later in the same clip, open with that sentence and continue in
+   order — still only the speaker's own words, cut on sentence boundaries.
+5. Re-score. If still below threshold → clip status `needs_review`, gate result `held` with the
+   reasons; it is never published automatically.
+
+**P0.3 Loop seam** (`shorts/loop.py`): after the edit plan, before render —
+- `seam_score` from (a) audio: last 0.3 s vs first 0.3 s loudness (no hard cut mid-sound), (b) text:
+  the last sentence ends a thought and the first starts one (sentence boundaries, no dangling
+  "and"), (c) visual: frame histogram/SSIM similarity of the last and first frame (OpenCV, already
+  installed).
+- If below `loop.threshold`: try moving the end to a nearby sentence end (±3 s) that scores better;
+  else add a 0.2–0.5 s bridge (crossfade of the last frame into the first, audio fade) so the replay
+  doesn't jump.
+- Length preference: shortest version that is still complete; `< 30 s` unless the clip's pacing
+  score is high, then up to 50–60 s.
+- `loop_score` and `loopable` stored on the clip; with two otherwise equal cuts the loopable one wins.
+
+**P0 data model** — migration `0005`: `clips.hook_score`, `clips.loop_score`, `clips.shorts` (JSON:
+`hook`, `retention_plan`, `packaging_variants`, `originality_flags`, `publish_gate_result`,
+`analytics`), status `needs_review`. Existing rows stay valid (all nullable).
+
+**P0 gate**: `publish_gate_node()` gains one rule — when `hook_gate` is on and a clip is `held`, it
+is left out of automatic publishing and shown for review with its reasons. (Needs your OK: it changes
+publishing behaviour.)
+
+### P1 — retention inside the clip
+- **Re-hook at 20–25 s** (`shorts/retention.py`): find exit points (a thought resolves: conclusion
+  markers + pause + topic shift) between 15–30 s; place a pattern interrupt there — punch-in/zoom,
+  a re-hook text line from the clip's own words ("But here's the part that matters" style framing is
+  allowed only as framing, never as a claim), or move the next setup sentence earlier if it exists.
+- **Kinetic captions**: phrase-by-phrase (2–4 words), large, high contrast; 1–3 power words per line
+  get colour + scale pop (power words = numbers, rare content words by IDF, emotion lexicon, the
+  focus keyword). New preset `kinetic` in `vendor/autoclip/captions.py`; old presets unchanged.
+- **SEO transcript**: the full clip transcript is stored (it already is: `Clip.transcript_text` +
+  per-source words) and exported as `.txt` next to SRT/VTT; descriptions use a keyword-rich excerpt.
+- **Packaging variants** (`shorts/packaging.py`): 2–3 variants per clip of title (30–50 chars,
+  keyword first, promise second), first-frame text (1–2 words, high contrast), description with
+  transcript excerpt, hashtags per platform; ranked by rules + (later) learned performance. The
+  first frame *is* the thumbnail for Shorts; the cover image stays for Instagram and long-form.
+
+### P2 — guardrails and feedback
+- **Originality gate**: compare hook type, structure (re-hook/loop pattern), caption preset and
+  title pattern with the last 5–10 published clips (Jaccard over pattern tokens + embedding
+  similarity of titles via the existing local text embedder). Too similar → pick another variant;
+  none left → `held` for review.
+- **First-hour loop**: add the YouTube Analytics **audience-retention report**
+  (`dimensions=elapsedVideoTimeRatio`, `metrics=audienceWatchRatio,relativeRetentionPerformance`)
+  per published Short — that gives retention at the first seconds and replays (ratio > 1).
+  "Viewed vs swiped away" is a YouTube Studio number not offered by the API as far as I know; I'll
+  confirm when implementing and otherwise import it from a Studio CSV. Instagram: Reels insights
+  (average watch time, plays, saves, shares). CSV/manual import into a local `clip_metrics` store
+  for anything the APIs don't give. The learning engine then ranks hook types/first-frame styles by
+  early retention (not views) and flags flops (low first-3-second retention) for re-edit.
+
+### P3 — later
+Adaptive length per content type/platform, A/B of hooks/titles/first-frame text (the learning
+engine already runs randomized experiments — reused), alternate hooks for low scorers, cost per clip
+and per published Short (the Model Hub already meters every paid call per job).
+
+## 4. Config (example, Settings → Clips; also `CLIPFORGE_SHORTS__*` env)
+
+```json
+"shorts": {
+  "hook_scorer": true, "hook_reconstruct": true, "hook_gate": true,
+  "hook": { "threshold": 0.55, "max_first_line_s": 1.5, "runway_search_s": 8.0,
+            "weights": { "frame_one_clarity": 0.2, "text_hook": 0.2, "spoken_hook_timing": 0.25,
+                         "curiosity_gap": 0.2, "swipe_risk": 0.15 },
+            "text_hook_words": [1, 5], "text_hook_seconds": 1.5, "tension_first": false },
+  "loop_seam": true,
+  "loop": { "threshold": 0.6, "search_s": 3.0, "bridge_s": [0.2, 0.5] },
+  "duration": { "min_s": 12, "prefer_max_s": 30, "max_s": 58, "long_needs_pacing": 0.7 },
+  "rehook": { "enabled": false, "window_s": [20, 25] },
+  "originality": { "enabled": false, "compare_last": 10, "max_similarity": 0.8 }
+}
+```
+
+## 5. Status output (example)
+
+```
+Clip 2 — "Why your prices scare clients away"        HELD for review
+  hook 0.41 < 0.55 after reconstruction
+    - first spoken line at 2.8 s (removed 2.1 s of "so, um, hey guys"; still 0.7 s of music)
+    - frame 1: no face, low sharpness (slow pan)
+    - premise answered at 2.0 s ("…because they compare you to…")
+  loop 0.72 (loopable: ends on "…and that's the mistake", opens on "The mistake…")
+  → not published automatically. Publish anyway / Re-edit / Discard
+
+Clip 1 — "Pricing mistake #1"                        PUBLISHED (scheduled 18:00)
+  hook 0.78 (runway removed 1.4 s; text hook "PRICE MISTAKE"); loop 0.81
+```
+
+Chat ("why was clip 2 held?") and the project page read the same `publish_gate_result`.
+
+## 6. Tests and acceptance (P0)
+
+| Test | Accepts when |
+|---|---|
+| low-hook rejection | a clip starting with 2.5 s of filler + no question scores < threshold; with reconstruction off it is `held` with reasons; it is never in the auto-publish list |
+| runway removal | "hey guys, so, um, … The biggest mistake is X" → new start at "The biggest", within 0.2 s of the word, not mid-word, duration ≥ min |
+| first line ≤ 1.5 s | after reconstruction the first non-filler word starts ≤ 1.5 s |
+| frame-one text | 1–5 words, every content word present in the transcript, rendered in the middle third (ASS position), present in the rendered frame 0 (OCR-free check: render with/without and diff the middle third) |
+| tension-first | with the flag on, a clip whose answer comes first opens on its question sentence; off → order unchanged |
+| loop seam | a cut ending mid-sentence is moved to the nearest sentence end within 3 s; when impossible a bridge of 0.2–0.5 s appears in the edit plan; `loop_score` stored |
+| no fabrication | text hooks/variants with words not in the source are rejected |
+| existing behaviour | all current tests pass with every flag off; with flags on, existing commands ("create 5 Shorts…") still work |
+
+Real-video check: run the pipeline on the test talk video before and after, compare hook scores,
+first-line time and the first frames side by side.
+
+## 7. Models
+
+Nothing new is required for P0: hook/loop scoring uses the transcript, the existing MediaPipe face
+detector and audio analysis, and OpenCV. Optional, for better judgement and wording:
+- a **local language model** through the existing Model Hub + Ollama (e.g. Qwen 2.5 7B or Llama
+  3.1 8B, ~5 GB; a 3B model works on 8 GB PCs) for text hooks, curiosity/tension judgement, title
+  variants — no paid API needed;
+- a better **word-timing transcription** (faster-whisper/WhisperX, already supported) makes kinetic
+  captions tighter than Vosk;
+- **effects** (zoom punch-ins, motion blur on cuts, bridges) are FFmpeg filters — no model.
+
+## 8. Questions for the owner (before P0 code)
+
+1. **Hold low-hook clips from automatic publishing?** (changes publishing behaviour; proposed: yes
+   for auto-publish and batches; manual "Publish" still allowed with a warning).
+2. **Re-ordering sentences** to open with the question ("tension first"): allowed by default, or only
+   with your approval per clip? (Proposed: off by default — it changes what the speaker appears to
+   say first.)
+3. **Language model for hooks/packaging:** local only (Ollama), or may it use your paid AI
+   connections within your budget? (Proposed: local first, paid if you've allowed it.)
