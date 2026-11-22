@@ -98,7 +98,7 @@ function UpcomingPosts() {
         ))}
       </ul>
       {data.items.some((i) => i.mode === "held" && i.status === "scheduled") && (
-        <p className="mt-3 text-[12px] text-faint">“CLIPFORGE posts it” needs CLIPFORGE running at that time (on Windows: the PC on and Docker Desktop started).</p>
+        <p className="mt-3 text-[12px] text-faint">“CLIPFORGE posts it” needs CLIPFORGE running at that time (the PC on and CLIPFORGE started).</p>
       )}
     </Card>
   );

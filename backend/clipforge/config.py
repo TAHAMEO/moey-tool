@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     #: key can be rotated without losing secrets.
     master_key_previous: SecretStr | None = None
     session_ttl_hours: int = 24 * 14
+    #: Single-person app on this computer (the Windows app): no sign-in, every request is the
+    #: owner. Only safe while CLIPFORGE listens on 127.0.0.1 alone, which the Windows app does.
+    local_mode: bool = False
     cookie_secure: bool | None = None  # defaults to True in production
     #: Public URL of the web app (used for OAuth redirect URIs and links).
     public_base_url: str = "http://localhost:3000"

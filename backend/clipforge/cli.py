@@ -226,6 +226,11 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["desktop"]:  # the Windows app (see clipforge/desktop.py)
+        from . import desktop
+
+        return desktop.main(argv[1:])
     # Media, backups and memory files are private to the service accounts: owner and the shared
     # `clipforge` group (the media worker may run as a separate user), nothing for others. Some
     # container runtimes start `exec` sessions with umask 000.

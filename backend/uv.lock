@@ -314,6 +314,7 @@ dependencies = [
     { name = "deno" },
     { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "ffmpeg-binaries", marker = "sys_platform == 'win32'" },
     { name = "httpx" },
     { name = "instagram-python-sdk" },
     { name = "langchain" },
@@ -322,8 +323,10 @@ dependencies = [
     { name = "langgraph-checkpoint-postgres" },
     { name = "mediapipe" },
     { name = "mem0ai" },
+    { name = "nodejs-wheel-binaries", marker = "sys_platform == 'win32'" },
     { name = "numpy" },
     { name = "opencv-contrib-python-headless" },
+    { name = "pgserver", marker = "sys_platform == 'win32'" },
     { name = "pgvector" },
     { name = "pillow" },
     { name = "psycopg", extra = ["binary"] },
@@ -360,16 +363,19 @@ requires-dist = [
     { name = "deno", specifier = "==2.9.8" },
     { name = "fastapi", specifier = "==0.163.2" },
     { name = "faster-whisper", specifier = "==1.2.1" },
+    { name = "ffmpeg-binaries", marker = "sys_platform == 'win32'", specifier = "==1.1.0" },
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "instagram-python-sdk", git = "https://github.com/Inoue-AI/Inoue-AI-Instagram-SDK.git?rev=5fcda416135c6d24277384b6208b98faf4f70cd8" },
+    { name = "instagram-python-sdk", path = "vendor-wheels/instagram_python_sdk-0.1.0-py3-none-any.whl" },
     { name = "langchain", specifier = "==1.5.0" },
     { name = "langchain-core", specifier = "==1.8.2" },
     { name = "langgraph", specifier = "==1.2.22" },
     { name = "langgraph-checkpoint-postgres", specifier = "==3.2.1" },
     { name = "mediapipe", specifier = "==1.2.3" },
     { name = "mem0ai", specifier = "==2.2.1" },
+    { name = "nodejs-wheel-binaries", marker = "sys_platform == 'win32'", specifier = "==24.19.0" },
     { name = "numpy", specifier = ">=2.1,<2.6" },
     { name = "opencv-contrib-python-headless", specifier = "==5.1.0.95" },
+    { name = "pgserver", marker = "sys_platform == 'win32'", specifier = "==0.1.4" },
     { name = "pgvector", specifier = "==0.5.1" },
     { name = "pillow", specifier = "==13.0.0" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.9" },
@@ -562,6 +568,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fasteners"
+version = "0.20"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/18/7881a99ba5244bfc82f06017316ffe93217dbbbcfa52b887caa1d4f2a6d3/fasteners-0.20.tar.gz", hash = "sha256:55dce8792a41b56f727ba6e123fcaee77fd87e638a6863cec00007bfea84c8d8", size = 25087, upload-time = "2025-08-11T10:19:37.785Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/ac/e5d886f892666d2d1e5cb8c1a41146e1d79ae8896477b1153a21711d3b44/fasteners-0.20-py3-none-any.whl", hash = "sha256:9422c40d1e350e4259f509fb2e608d6bc43c0136f79a00db1b49046029d0b3b7", size = 18702, upload-time = "2025-08-11T10:19:35.716Z" },
+]
+
+[[package]]
 name = "faster-whisper"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -575,6 +590,20 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/99/49ee85903dee060d9f08297b4a342e5e0bcfca2f027a07b4ee0a38ab13f9/faster_whisper-1.2.1-py3-none-any.whl", hash = "sha256:79a66ad50688c0b794dd501dc340a736992a6342f7f95e5811be60b5224a26a7", size = 1118909, upload-time = "2025-10-31T11:35:47.794Z" },
+]
+
+[[package]]
+name = "ffmpeg-binaries"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "patool" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/7e/aa13a00d52437f6748c38e8793e427dee26348636eeee5f2237a2b90feef/ffmpeg_binaries-1.1.0.tar.gz", hash = "sha256:c8eb4e3113b1e471252461ab10aab3d36daa7266b2fc15bc6ec479d104060ba2", size = 8002, upload-time = "2026-01-04T00:25:03.194Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/66/132fd861852e345684a65b9dae093f842352d21384f3c33292a486380dbe/ffmpeg_binaries-1.1.0-py3-none-any.whl", hash = "sha256:056cf2b3a6025f4f6fdbf8680a50a986fbdbc93ac58f1929388447db147528cd", size = 10396, upload-time = "2026-01-04T00:24:34.522Z" },
+    { url = "https://files.pythonhosted.org/packages/00/ba/b3b0bc096cf3662a7a771976145d060e6fdc5d51360d18adfc918ebdd017/ffmpeg_binaries-1.1.0-py3-none-win_amd64.whl", hash = "sha256:8d5fbaf2d28fcc72e8d2c22628977cf8863641592c9ec15358290490f9195b9e", size = 91169531, upload-time = "2026-01-04T00:24:45.809Z" },
 ]
 
 [[package]]
@@ -857,11 +886,26 @@ wheels = [
 [[package]]
 name = "instagram-python-sdk"
 version = "0.1.0"
-source = { git = "https://github.com/Inoue-AI/Inoue-AI-Instagram-SDK.git?rev=5fcda416135c6d24277384b6208b98faf4f70cd8#5fcda416135c6d24277384b6208b98faf4f70cd8" }
+source = { path = "vendor-wheels/instagram_python_sdk-0.1.0-py3-none-any.whl" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
 ]
+wheels = [
+    { filename = "instagram_python_sdk-0.1.0-py3-none-any.whl", hash = "sha256:eb8b54bbfca43ebd74df314fcb178995e81ee5bf4d34db0d4a0474eec28b5b0d" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aioresponses", marker = "extra == 'dev'", specifier = ">=0.7.6" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
+    { name = "pydantic", specifier = ">=2.5.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "jiter"
@@ -1223,6 +1267,16 @@ wheels = [
 ]
 
 [[package]]
+name = "nodejs-wheel-binaries"
+version = "24.19.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/76/7e97195e14346598565a0de4ca8bdbd5e634b3fb5b1ba590b7b1b89f8a63/nodejs_wheel_binaries-24.19.0.tar.gz", hash = "sha256:db217eef8cab8551667863379b08db4d9067403f6cbbe87481eb40edceb8aa9b", size = 8058, upload-time = "2026-08-19T21:47:19.671Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/d1/e3be8fa327a795bcaf7a19cd84299e338a7bce32ff0665fdce9cfa22573c/nodejs_wheel_binaries-24.19.0-py2.py3-none-win_amd64.whl", hash = "sha256:67e3abeb9c3830cae8c8487ae8a2af7cc27dfa75af06145cee5ca7d1857c81bd", size = 42448503, upload-time = "2026-08-19T21:47:12.093Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/37/34cf28ba1691a060174948a9927fe61091982d6048b2e403071a9acce443/nodejs_wheel_binaries-24.19.0-py2.py3-none-win_arm64.whl", hash = "sha256:d9074c665ea68b04e183d82482c86dc907d3a9bd15eb6cf85542cb785266bb36", size = 40090155, upload-time = "2026-08-19T21:47:16.032Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.5.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1370,6 +1424,28 @@ wheels = [
 ]
 
 [[package]]
+name = "patool"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1a/3c/328a6a4e3da061efbd8d69e6b8d7cd5ee37877f9782c68e5b370f4a10dbf/patool-4.1.0.tar.gz", hash = "sha256:54c669b2af0f5e46d59a53f02ca4f83d53b3a7a25d50e97778582da7cea65daf", size = 2012606, upload-time = "2026-09-04T10:46:13.986Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/f6/9a9049cfa3b00073c632a437ba85b7d81c787bdeded80cd3dd295089a20a/patool-4.1.0-py2.py3-none-any.whl", hash = "sha256:acb7cdc5c5b9138eb9713e021aa5450aa32bf3d5c9e778b51e7b6786407eac46", size = 102022, upload-time = "2026-09-04T10:46:11.88Z" },
+]
+
+[[package]]
+name = "pgserver"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fasteners" },
+    { name = "platformdirs" },
+    { name = "psutil" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/80/f6304274c1740c283bc7317ababceb3c23c8275ce4995f7379e17b49bc6d/pgserver-0.1.4-cp312-cp312-win_amd64.whl", hash = "sha256:406e9355334e40754160a33d93f18a848720a38cd0b68da50be2ea272c89ed2d", size = 12797714, upload-time = "2024-06-08T18:41:50.774Z" },
+]
+
+[[package]]
 name = "pgvector"
 version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1480,6 +1556,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/ca/25afc144934014700c52e05103c2421997482d561f3101ff352e1292fb81/protobuf-6.33.6-cp39-abi3-manylinux2014_s390x.whl", hash = "sha256:c96c37eec15086b79762ed265d59ab204dabc53056e3443e702d2681f4b39ce3", size = 339381, upload-time = "2026-03-18T19:04:54.616Z" },
     { url = "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593", size = 323436, upload-time = "2026-03-18T19:04:55.768Z" },
     { url = "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl", hash = "sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901", size = 170656, upload-time = "2026-03-18T19:04:59.826Z" },
+]
+
+[[package]]
+name = "psutil"
+version = "7.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/c6/d1ddf4abb55e93cebc4f2ed8b5d6dbad109ecb8d63748dd2b20ab5e57ebe/psutil-7.2.2.tar.gz", hash = "sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372", size = 493740, upload-time = "2026-01-28T18:14:54.428Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
 ]
 
 [[package]]

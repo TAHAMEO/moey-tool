@@ -52,12 +52,15 @@ def _me(user: User, session: UserSession) -> dict:
         "display_name": user.display_name,
         "role": user.role,
         "csrf_token": session.csrf_token,
+        "local": get_settings().local_mode,
     }
 
 
 @router.get("/status")
 def setup_status(db: Session = Depends(get_db)) -> dict:
-    return {"setup_required": not auth.users_exist(db)}
+    if get_settings().local_mode:
+        return {"setup_required": False, "local": True}
+    return {"setup_required": not auth.users_exist(db), "local": False}
 
 
 @router.post("/setup")
@@ -97,8 +100,17 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db),
 
 
 @router.get("/me")
-def me(principal: Principal = Depends(current_principal)) -> dict:
-    return _me(principal.user, principal.session)
+def me(request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
+    session = auth.resolve_session(db, request.cookies.get(SESSION_COOKIE))
+    if session is not None:
+        return _me(session.user, session)
+    if not get_settings().local_mode:
+        raise HTTPException(status_code=401, detail={"code": "not_authenticated", "message": "Please sign in."})
+    # Single-person app on this computer: no sign-in page, this browser simply gets a session.
+    user = auth.local_owner(db)
+    token, session = auth.create_session(db, user, ip=client_ip(request), user_agent=request.headers.get("user-agent"))
+    _set_cookie(response, token)
+    return _me(user, session)
 
 
 @router.post("/password")

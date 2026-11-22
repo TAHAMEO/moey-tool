@@ -1,13 +1,15 @@
-# Builds the Windows installer and runs the real setup.exe silently on Windows Server 2022 and 2025:
-# a full installation (WSL 2, Ubuntu, Docker Engine, the CLIPFORGE build, models except the 1.8 GB
-# speech model) and then checks that CLIPFORGE answers. If a machine first needs a restart for WSL 2,
-# the test checks the continue-after-restart task and the resumed run instead.
+# Builds the Windows installer and runs the real setup.exe silently on Windows Server 2022 and 2025.
+# CLIPFORGE installs as an ordinary Windows app (no Docker, no Linux, no administrator rights): the
+# test checks that it answers on http://localhost:3000 without a sign-in, stops and starts again,
+# updates in place, and uninstalls. Only the 1.8 GB speech model is skipped.
 name: Windows installer
 
 on:
   push:
     paths:
       - "installer/windows/**"
+      - "backend/**"
+      - "frontend/**"
       - ".github/workflows/windows-installer.yml"
   workflow_dispatch:
 
@@ -19,15 +21,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install NSIS
         run: sudo apt-get update -q && sudo apt-get install -y -q nsis
-      - name: Build ClipForge-Setup.exe
+      - name: Build ClipForge-Setup.exe (and the standalone web app inside it)
         run: installer/windows/build.sh
-      - name: Test the installer scripts (stand-in wsl.exe, real Ubuntu image)
-        run: |
-          curl -fsSLo /tmp/rootfs.tar.gz https://cloud-images.ubuntu.com/wsl/releases/24.04/20240423/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz
-          echo "8251e27ffff381a4af5f41dcb94d867de3e0d9774a9241908ab34555d99315ea  /tmp/rootfs.tar.gz" | sha256sum -c
-          pwsh -NoProfile -File installer/windows/tests/run-tests.ps1 -Rootfs /tmp/rootfs.tar.gz
+      - name: Test the installer scripts
+        run: pwsh -NoProfile -File installer/windows/tests/run-tests.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: ClipForge-Setup
@@ -46,9 +48,6 @@ jobs:
             if ($errors) { $errors | ForEach-Object { "$($file.Name): $($_.Message)" }; exit 1 }
             "$($file.Name) parses"
           }
-      - name: Preflight checks on a real Windows machine
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/windows/scripts/install.ps1 -Step preflight -InstallDir "$env:RUNNER_TEMP\ClipForge"
       - name: Started like setup.exe starts it (32-bit, input that never ends), the script switches to 64-bit and never waits on a program
         shell: powershell
         run: |
@@ -85,81 +84,94 @@ jobs:
         with:
           name: ClipForge-Setup
           path: setup
-      - name: setup.exe, silently - the full installation
+      - name: setup.exe, silently - install, run, stop, start, update, uninstall
         shell: powershell
         env:
           CLIPFORGE_SKIP_SPEECH_MODEL: "1"   # 1.8 GB from a slow server; everything else is real
         run: |
           $drive = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free } | Sort-Object Free -Descending | Select-Object -First 1
-          $dir = Join-Path $drive.Root "cf-setup-test"
-          "Installing into $dir"
-          function Get-WslFeatures {
-            (@("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform") | ForEach-Object {
-              "$_=$((Get-WindowsOptionalFeature -Online -FeatureName $_).State)" }) -join ", "
-          }
-          "WSL features before: $(Get-WslFeatures)"
+          $dir = Join-Path $drive.Root "ClipForge Test"   # a space in the path, on purpose
           $exe = (Get-ChildItem setup\ClipForge-Setup-*.exe | Select-Object -First 1).FullName
+          $problems = @()
 
-          function Invoke-Setup([string]$Path, [string[]]$Arguments) {
+          function Invoke-Setup([string]$Path, [string[]]$Arguments, [int]$Minutes = 40) {
             $started = Get-Date
             $p = Start-Process -FilePath $Path -ArgumentList $Arguments -PassThru
-            $null = $p.Handle  # keeps the exit code readable
-            if (-not $p.WaitForExit(45 * 60 * 1000)) {
-              Write-Host "setup.exe did not finish within 45 minutes. Still running:"
-              Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(setup|ClipForge-Setup.*|powershell|wsl|wslservice|msiexec|ping|findstr)\.exe$' } |
-                ForEach-Object { Write-Host "  $($_.ProcessId) $($_.Name): $($_.CommandLine)" }
+            $null = $p.Handle
+            if (-not $p.WaitForExit($Minutes * 60 * 1000)) {
+              Write-Host "$Path did not finish within $Minutes minutes."
               $log = Join-Path $dir "install.log"
-              if (Test-Path $log) { Write-Host "----- install.log so far -----"; Get-Content $log | ForEach-Object { Write-Host $_ } }
+              if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host $_ } }
               Stop-Process -Id $p.Id -Force
               exit 1
             }
-            Write-Host "setup.exe $($Arguments -join ' ') -> exit code $($p.ExitCode) after $([int]((Get-Date) - $started).TotalSeconds) s"
+            Write-Host "$([IO.Path]::GetFileName($Path)) $($Arguments -join ' ') -> exit code $($p.ExitCode) after $([int]((Get-Date) - $started).TotalSeconds) s"
             return [int]$p.ExitCode
           }
-          function Test-Run([int]$Code, [string]$Label) {
-            $log = Get-Content -Raw (Join-Path $dir "install.log")
-            "----- install.log -----"; $log; "-----------------------"
-            $problems = @()
-            if ($log -match "is not recognized") { $problems += "a program was not found" }
-            if ($log -notmatch "Setup runs in PowerShell 5\.1[^\r\n]*\(64-bit\)") { $problems += "setup's steps did not run in 64-bit Windows PowerShell 5.1" }
-            if ($Code -eq 3010) {
-              $task = Get-ScheduledTask -TaskName "CLIPFORGE setup" -ErrorAction SilentlyContinue
-              if (-not $task) { $problems += "no task to continue setup after the restart" }
-              else {
-                "Continue-after-restart task: $($task.Actions[0].Execute) $($task.Actions[0].Arguments) (run level $($task.Principal.RunLevel), trigger $($task.Triggers[0].CimClass.CimClassName) for $($task.Triggers[0].UserId))"
-                if ($task.Actions[0].Execute -ne (Join-Path $dir "setup.exe") -or $task.Actions[0].Arguments -ne "/resume") { $problems += "the task does not run setup.exe /resume" }
-                if ("$($task.Principal.RunLevel)" -ne "Highest") { $problems += "the task does not run as administrator" }
-                if ($task.Settings.DisallowStartIfOnBatteries) { $problems += "the task would not start on battery" }
-              }
-              if ($log -notmatch "restart") { $problems += "the log does not say a restart is needed" }
-            } elseif ($Code -eq 0) {
-              foreach ($line in @("WSL 2 is ready", "Creating the ClipForge Linux environment", "Docker", "Building CLIPFORGE", "CLIPFORGE is running at http://localhost:3000")) {
-                if ($log -notmatch [regex]::Escape($line)) { $problems += "the log lacks: $line" }
-              }
-              try { $ready = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://localhost:3000/api/health/ready").StatusCode } catch { $ready = "$_" }
-              "http://localhost:3000/api/health/ready from Windows: $ready"
-              if ($ready -ne 200) { $problems += "CLIPFORGE does not answer on http://localhost:3000 ($ready)" }
-              $page = try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://localhost:3000/login").StatusCode } catch { "$_" }
-              "http://localhost:3000/login: $page"
-              if ($page -ne 200) { $problems += "the web app does not answer ($page)" }
-              foreach ($link in @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CLIPFORGE\CLIPFORGE.lnk", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CLIPFORGE\Stop CLIPFORGE.lnk")) {
-                if (-not (Test-Path $link)) { $problems += "missing shortcut $link" }
-              }
-              if (Get-ScheduledTask -TaskName "CLIPFORGE setup" -ErrorAction SilentlyContinue) { $problems += "the continue-after-restart task was left behind" }
-            } else {
-              $problems += "unexpected exit code $Code"
+          function Test-Ready { try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 "http://localhost:3000/api/health/ready").StatusCode -eq 200 } catch { $false } }
+          function Show-Logs {
+            Write-Host "----- install.log -----"; Get-Content (Join-Path $dir "install.log") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            foreach ($log in Get-ChildItem (Join-Path $dir "logs") -Filter *.log -ErrorAction SilentlyContinue) {
+              Write-Host "----- logs\$($log.Name) (last 40 lines) -----"; Get-Content $log.FullName -Tail 40 | ForEach-Object { Write-Host $_ }
             }
-            if ($problems) { $problems | ForEach-Object { "FAILED ($Label): $_" }; exit 1 }
-            "OK ($Label)"
+          }
+          function Launcher([string]$Action) {
+            $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir "app\installer\windows\scripts\clipforge.ps1") $Action -NoWindow 2>&1 | Out-String
+            Write-Host $out
+            return $LASTEXITCODE
           }
 
+          # 1. Install.
           $code = Invoke-Setup $exe @("/S", "/D=$dir")
-          Test-Run $code "first run"
-          if ($code -eq 3010) {
-            # What the sign-in task does after the restart (without the restart: WSL still waits for it).
-            $code = Invoke-Setup (Join-Path $dir "setup.exe") @("/S", "/resume")
-            Test-Run $code "continued run"
-            $runs = ([regex]::Matches((Get-Content -Raw (Join-Path $dir "install.log")), "Checking this PC")).Count
-            if ($runs -ne 2) { "FAILED: expected two runs in install.log, found $runs"; exit 1 }
+          if ($code -ne 0) { Show-Logs; "FAILED: setup.exe exit code $code"; exit 1 }
+          $log = Get-Content -Raw (Join-Path $dir "install.log")
+          foreach ($line in @("Setup runs in PowerShell 5.1", "(64-bit)", "uv checksum verified", "Python and all components are installed", "CLIPFORGE is set up", "CLIPFORGE is running at http://localhost:3000")) {
+            if (-not $log.Contains($line)) { $problems += "install.log lacks: $line" }
           }
-          "WSL features after: $(Get-WslFeatures)"
+          if ($log -match "is not recognized|ERROR:") { $problems += "install.log reports an error" }
+          if (-not (Test-Ready)) { $problems += "CLIPFORGE does not answer on http://localhost:3000 after setup" }
+
+          # 2. No sign-in: this browser is the owner straight away.
+          $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+          $me = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://localhost:3000/api/auth/me"
+          "auth/me: $($me | ConvertTo-Json -Compress)"
+          if ($me.role -ne "owner" -or -not $me.local) { $problems += "a sign-in would be needed" }
+          $schedule = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://localhost:3000/api/schedule"
+          if ($null -eq $schedule.ready) { $problems += "the Schedule page's API doesn't answer" }
+          $diag = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://localhost:3000/api/diagnostics"
+          "diagnostics: database=$($diag.database.ok) ffmpeg=$($diag.ffmpeg.ok) workers=$($diag.workers.ok) memory=$($diag.memory.ok) downloader=$($diag.downloader.ok)"
+          foreach ($part in @("database", "ffmpeg", "workers", "memory", "downloader")) { if (-not $diag.$part.ok) { $problems += "diagnostics: $part is not OK" } }
+          foreach ($page in @("/", "/schedule", "/videos", "/settings")) {
+            $status = try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://localhost:3000$page").StatusCode } catch { "$_" }
+            "page $page -> $status"
+            if ($status -ne 200) { $problems += "page $page answered $status" }
+          }
+          foreach ($link in @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CLIPFORGE\CLIPFORGE.lnk", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\CLIPFORGE\Stop CLIPFORGE.lnk")) {
+            if (-not (Test-Path $link)) { $problems += "missing shortcut $link" }
+          }
+          # Listening on this PC only.
+          $open = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 3000, 38100, 38101 }
+          $open | ForEach-Object { "listening: $($_.LocalAddress):$($_.LocalPort)" }
+          if ($open | Where-Object { $_.LocalAddress -notin "127.0.0.1", "::1" }) { $problems += "something listens beyond this PC" }
+
+          # 3. Stop and start again with the launcher (what the shortcuts do).
+          if ((Launcher "stop") -ne 0) { $problems += "the launcher couldn't stop CLIPFORGE" }
+          Start-Sleep -Seconds 3
+          if (Test-Ready) { $problems += "CLIPFORGE still answers after stop" }
+          if ((Launcher "start") -ne 0 -or -not (Test-Ready)) { $problems += "CLIPFORGE didn't start again" }
+
+          # 4. Update: run setup again over the running installation; data is kept.
+          $code = Invoke-Setup $exe @("/S", "/D=$dir")
+          if ($code -ne 0) { $problems += "running setup again (update) failed: $code" }
+          $again = Invoke-RestMethod -UseBasicParsing -WebSession (New-Object Microsoft.PowerShell.Commands.WebRequestSession) "http://localhost:3000/api/auth/me"
+          if ($again.id -ne $me.id) { $problems += "the update lost the existing data" }
+
+          # 5. Uninstall (keeping data, the default).
+          $code = Invoke-Setup (Join-Path $dir "Uninstall.exe") @("/S", "_?=$dir") 10
+          if (Test-Ready) { $problems += "CLIPFORGE still answers after uninstall" }
+          if (Test-Path (Join-Path $dir "runtime")) { $problems += "the uninstaller left the runtime behind" }
+          if (-not (Test-Path (Join-Path $dir "data\postgres"))) { $problems += "the uninstaller deleted the data although asked to keep it" }
+
+          if ($problems) { Show-Logs; $problems | ForEach-Object { "FAILED: $_" }; exit 1 }
+          Show-Logs
+          "OK: installed, answered without sign-in, stopped, started, updated and uninstalled"

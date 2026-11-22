@@ -1,33 +1,36 @@
 <#
 .SYNOPSIS
-  Installs or updates CLIPFORGE on Windows 10 (version 2004 or later) and Windows 11.
+  Installs or updates CLIPFORGE on Windows 10 and 11 - as an ordinary Windows app: no Docker,
+  no Linux, no WSL, no administrator rights.
 
 .DESCRIPTION
-  CLIPFORGE runs in its own WSL 2 Linux environment called "ClipForge", with the free Docker
-  Engine inside it (Docker Desktop is not needed). setup.exe calls this script one step at a time
-  so its progress bar advances; every step is safe to run again, which is also how updates work.
+  Everything lives in the installation folder:
+    app\        CLIPFORGE itself (from setup.exe)       runtime\   Python and its packages
+    data\       videos, models and the database          config.env settings and keys for this PC
+  Python, PostgreSQL (with pgvector), FFmpeg and Node.js all come as packages pinned by checksum in
+  app\backend\uv.lock, installed by uv (itself downloaded from PyPI and checked against its
+  SHA-256). setup.exe runs one step at a time so its progress bar moves; every step is safe to run
+  again, which is also how updates work.
 
-    preflight  check Windows version, 64-bit, memory, disk space and virtualization
-    wsl        turn on WSL 2 if needed (exit code 3010 = restart Windows, then setup continues)
-    distro     download Ubuntu 24.04 for WSL (checksum verified) and create the ClipForge environment
-    system     install Docker Engine inside it and enable systemd
-    app        copy CLIPFORGE in, create Videos\ClipForge, build and start it
-    models     download the speech and vision models (verified)
+    preflight  check Windows version, memory and disk space
+    previous   stop a running CLIPFORGE (and the older Linux-based version, if there is one)
+    runtime    download Python and CLIPFORGE's components (about 1.2 GB)
+    setup      create CLIPFORGE's settings and database
+    models     download the AI models (the 1.8 GB speech model too, with progress)
     start      start CLIPFORGE and wait until it answers
 
-  By hand:  powershell -ExecutionPolicy Bypass -File install.ps1 -Step all
-  Log:      %LOCALAPPDATA%\ClipForge\install.log
+  By hand:  powershell -ExecutionPolicy Bypass -File install.ps1 -Step all -InstallDir <folder>
+  Log:      <folder>\install.log
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet("check", "preflight", "wsl", "distro", "system", "app", "models", "start", "all")]
+  [ValidateSet("check", "preflight", "previous", "remove-previous", "runtime", "setup", "models", "start", "all")]
   [string]$Step = "all",
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "ClipForge")
 )
 
-# setup.exe is a 32-bit program, and so is the PowerShell it starts. On 64-bit Windows a 32-bit
-# process is shown C:\Windows\SysWOW64 when it asks for System32 - and wsl.exe exists only in the
-# real System32. So always continue in 64-bit PowerShell (the "Sysnative" path reaches it).
+# setup.exe is a 32-bit program, and so is the PowerShell it starts. Continue in 64-bit
+# PowerShell, so every program found and started is the 64-bit one.
 if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
   $native = Join-Path $env:WINDIR "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
   & $native -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Step $Step -InstallDir $InstallDir
@@ -37,23 +40,31 @@ if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProces
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-$env:WSL_UTF8 = "1"  # wsl.exe prints UTF-8 instead of UTF-16 when its output is captured
 
-$Distro = "ClipForge"
-$RootfsUrl = "https://cloud-images.ubuntu.com/wsl/releases/24.04/20240423/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz"
-$RootfsSha256 = "8251e27ffff381a4af5f41dcb94d867de3e0d9774a9241908ab34555d99315ea"
-# Offline or company networks: point CLIPFORGE_ROOTFS_URL at a copy of the same file (the checksum still applies,
-# unless CLIPFORGE_ROOTFS_SHA256 names the checksum of a different image you trust).
-if ($env:CLIPFORGE_ROOTFS_URL) { $RootfsUrl = $env:CLIPFORGE_ROOTFS_URL }
-if ($env:CLIPFORGE_ROOTFS_SHA256) { $RootfsSha256 = $env:CLIPFORGE_ROOTFS_SHA256.ToLower() }
-$RebootRequired = 3010
-$AppDir = Join-Path $InstallDir "app"
-$Log = Join-Path $InstallDir "install.log"
-$Videos = [Environment]::GetFolderPath("MyVideos")  # follows a Videos folder moved to another drive or OneDrive
-if (-not $Videos) { $Videos = Join-Path $HOME "Videos" }
-$Inbox = Join-Path $Videos "ClipForge"
+# uv, the Python package manager, from PyPI (its official Windows build), checked against this SHA-256.
+$UvUrl = "https://files.pythonhosted.org/packages/dd/ef/ceeabf3631117f7354787d9fb1ffe943899e59ed4b887a696ed547e47e76/uv-0.13.9-py3-none-win_amd64.whl"
+$UvSha256 = "6a44b2ed8111d2f60d2b92627c5dccda3f7ed7570b18ce115e569cd68c28246b"
+$UvExeInWheel = "uv-0.13.9.data/scripts/uv.exe"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+$InstallDir = (Resolve-Path $InstallDir).Path
+$AppDir = Join-Path $InstallDir "app"
+$Runtime = Join-Path $InstallDir "runtime"
+$Uv = Join-Path $Runtime "uv\uv.exe"
+$Venv = Join-Path $Runtime "venv"
+$Python = Join-Path $Venv "Scripts\python.exe"
+$Log = Join-Path $InstallDir "install.log"
+$Distro = "ClipForge"  # the older, Linux-based CLIPFORGE (0.2.x) used a WSL environment of this name
+
+# uv keeps Python, its packages and its download cache inside the installation folder.
+$env:UV_PYTHON_INSTALL_DIR = Join-Path $Runtime "python"
+$env:UV_CACHE_DIR = Join-Path $Runtime "cache"
+$env:UV_PROJECT_ENVIRONMENT = $Venv
+$env:UV_PYTHON_PREFERENCE = "only-managed"
+$env:UV_LINK_MODE = "copy"
+$env:UV_HTTP_TIMEOUT = "120"
+$env:UV_NO_PROGRESS = "1"
+$env:PYTHONUTF8 = "1"
 
 function Say([string]$Message) {
   # Straight to the console (setup.exe shows it), never into a function's return value.
@@ -67,13 +78,6 @@ function Stop-Install([string]$Message) {
   Say "ERROR: $Message"
   Say "The full log is in $Log"
   exit 1
-}
-
-function ConvertTo-WslPath([string]$WindowsPath) {
-  # C:\Users\Me\Videos -> /mnt/c/Users/Me/Videos (how Windows drives appear inside WSL)
-  $full = if ($WindowsPath -match '^[A-Za-z]:\\') { $WindowsPath } else { [IO.Path]::GetFullPath($WindowsPath) }
-  if ($full -notmatch '^([A-Za-z]):\\(.*)$') { Stop-Install "Unsupported folder: $full" }
-  return ("/mnt/" + $Matches[1].ToLower() + "/" + ($Matches[2] -replace '\\', '/')).TrimEnd('/')
 }
 
 function Invoke-Native([string]$File, [string[]]$Arguments) {
@@ -154,33 +158,6 @@ function Get-WslPath {
   return $null
 }
 
-function Get-Wsl {
-  $wsl = Get-WslPath
-  if (-not $wsl) { Stop-Install "WSL is not installed yet. Restart Windows, then run CLIPFORGE setup again." }
-  return $wsl
-}
-
-function Invoke-Wsl([string[]]$Arguments, [int]$Seconds = 1200) {
-  # WSL's own commands (install, update, settings). Returns the exit code.
-  $wsl = Get-WslPath
-  if (-not $wsl) { return 9009 }  # like "command not found"
-  return (Invoke-Limited $wsl $Arguments $Seconds).Code
-}
-
-function Test-DistroExists {
-  $wsl = Get-WslPath
-  if (-not $wsl) { return $false }
-  $result = Invoke-Limited $wsl @("--list", "--quiet") 120 -Quiet
-  if ($result.Code -ne 0) { return $false }
-  return ($result.Lines -contains $Distro)
-}
-
-function Invoke-InDistro([string[]]$Arguments) {
-  # --exec hands every argument to Linux exactly as given; "--" would let a shell reinterpret
-  # characters such as \ ' $ in Windows folder names.
-  return Invoke-Native (Get-Wsl) (@("--distribution", $Distro, "--user", "root", "--exec") + $Arguments)
-}
-
 function Get-File([string]$Url, [string]$Destination, [string]$Label) {
   Add-Type -AssemblyName System.Net.Http
   $client = New-Object System.Net.Http.HttpClient
@@ -216,43 +193,6 @@ function Get-File([string]$Url, [string]$Destination, [string]$Label) {
   }
 }
 
-$ResumeTask = "CLIPFORGE setup"
-$RunOnceKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
-
-function Register-Resume {
-  # setup.exe needs administrator rights, and Windows may skip a program in the RunOnce key that
-  # asks for them at sign-in. A sign-in task with the highest privileges starts it without asking.
-  $setup = Join-Path $InstallDir "setup.exe"
-  if (-not (Test-Path -LiteralPath $setup)) { Say "   After the restart, run CLIPFORGE setup again."; return }
-  try {
-    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $action = New-ScheduledTaskAction -Execute $setup -Argument "/resume"
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-    $trigger.Delay = "PT20S"
-    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 5
-    Register-ScheduledTask -TaskName $ResumeTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-    Say "   Setup will continue by itself after you sign in again"
-  } catch {
-    Say "   Note: could not create the sign-in task ($($_.Exception.Message)); using RunOnce instead"
-    try { Set-ItemProperty -Path $RunOnceKey -Name "ClipForgeSetup" -Value "`"$setup`" /resume" }
-    catch { Say "   After the restart, run CLIPFORGE setup again." }
-  }
-}
-
-function Unregister-Resume {
-  # Nothing to remove is the usual case; no error here may stop setup.
-  try { Unregister-ScheduledTask -TaskName $ResumeTask -Confirm:$false -ErrorAction Stop } catch { }
-  try { Remove-ItemProperty -Path $RunOnceKey -Name "ClipForgeSetup" -ErrorAction Stop } catch { }
-}
-
-function Request-Restart([string]$Message) {
-  Set-Content -Path (Join-Path $InstallDir "wsl-restart-requested") -Value (Get-Date -Format o)
-  Register-Resume
-  Say $Message
-  exit $RebootRequired
-}
-
 # --------------------------------------------------------------------------- steps
 function Step-Check {
   # How setup runs on this PC (also used by the automated Windows tests).
@@ -260,8 +200,6 @@ function Step-Check {
   Say ("   Windows {0}, PowerShell {1}, 64-bit process: {2}" -f [Environment]::OSVersion.Version, $PSVersionTable.PSVersion,
        [Environment]::Is64BitProcess)
   if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { Stop-Install "Setup is still running as 32-bit PowerShell." }
-  $wsl = Get-WslPath
-  if ($wsl) { Say "   wsl.exe: $wsl" } else { Say "   wsl.exe: not found yet (the WSL step installs it)" }
   $code = Invoke-Native "cmd.exe" @("/c", "echo output-check-stdout & echo output-check-stderr 1>&2 & exit /b 3")
   if ($code -ne 3) { Stop-Install "Program output check failed (exit code $code instead of 3)." }
   Say "   Program output check OK"
@@ -294,255 +232,131 @@ function Step-Check {
   $quoted = ConvertTo-ArgumentLine @("plain", "with space", 'C:\dir with space\', 'say "hi"', "")
   if ($quoted -ne 'plain "with space" "C:\dir with space\\" "say \"hi\"" ""') { Stop-Install "Argument quoting check failed: $quoted" }
   Say "   Argument quoting check OK"
-  $problem = Get-VirtualizationProblem
-  Say ("   Virtual machines: {0}" -f $(if ($problem) { "not yet ($problem)" } else { "Windows can run them" }))
 }
 
 function Step-Preflight {
   Say "Checking this PC"
-  Unregister-Resume  # this run is the one a restart was waiting for
   $os = [Environment]::OSVersion.Version
-  if ($os.Major -lt 10 -or $os.Build -lt 19041) {
-    Stop-Install "CLIPFORGE needs Windows 10 version 2004 (build 19041) or later, or Windows 11. This PC has build $($os.Build). Install the Windows updates, then run setup again."
+  if ($os.Major -lt 10 -or $os.Build -lt 17763) {
+    Stop-Install "CLIPFORGE needs Windows 10 (version 1809 or later) or Windows 11. This PC has build $($os.Build). Install the Windows updates, then run setup again."
   }
   if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64" -and $env:PROCESSOR_ARCHITEW6432 -ne "AMD64") {
     Stop-Install "CLIPFORGE needs a 64-bit Intel or AMD processor (ARM-based PCs are not supported)."
   }
   $memoryGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
-  if ($memoryGb -lt 8) { Stop-Install "CLIPFORGE needs at least 8 GB of memory (this PC has $memoryGb GB)." }
-  if ($memoryGb -lt 12) { Say "   Note: $memoryGb GB of memory works, but 16 GB is recommended." }
+  if ($memoryGb -lt 4) { Stop-Install "CLIPFORGE needs at least 4 GB of memory (this PC has $memoryGb GB)." }
+  if ($memoryGb -lt 8) { Say "   Note: $memoryGb GB of memory works for short videos; 8 GB or more is recommended." }
   $drive = (Get-Item $InstallDir).PSDrive
   $freeGb = [math]::Round((Get-PSDrive $drive.Name).Free / 1GB)
-  if ($freeGb -lt 25) { Stop-Install "CLIPFORGE needs about 25 GB of free space on drive $($drive.Name): (only $freeGb GB free)." }
-  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-  $hypervisor = (Get-CimInstance Win32_ComputerSystem).HypervisorPresent
-  if (-not $cpu.VirtualizationFirmwareEnabled -and -not $hypervisor) {
-    Say "   Warning: hardware virtualization looks switched off. If WSL 2 fails to start, turn on 'Intel VT-x' / 'AMD-V' (SVM) in the PC's BIOS/UEFI settings."
-  }
+  if ($freeGb -lt 10) { Stop-Install "CLIPFORGE needs about 10 GB of free space on drive $($drive.Name): (only $freeGb GB free)." }
   Say "   Windows build $($os.Build), $memoryGb GB memory, $freeGb GB free - OK"
+  Say ("   Setup runs in PowerShell {0} ({1})" -f $PSVersionTable.PSVersion, $(if ([Environment]::Is64BitProcess) { "64-bit" } else { "32-bit" }))
+}
+
+function Step-Previous {
+  # An update: stop the running CLIPFORGE so its files can be replaced.
+  if (Test-Path $Python) {
+    Say "Stopping the running CLIPFORGE"
+    [void](Invoke-Limited $Python @("-m", "clipforge.cli", "desktop", "stop", "--root", $InstallDir) 180 -Quiet)
+  }
+  # The older version (0.2.x) ran in a Linux environment under WSL: stop it so it gives up port 3000.
   $wsl = Get-WslPath
-  $wslText = if ($wsl) { $wsl } else { "not installed yet" }
-  Say ("   Setup runs in PowerShell {0} ({1}); wsl.exe: {2}" -f $PSVersionTable.PSVersion,
-       $(if ([Environment]::Is64BitProcess) { "64-bit" } else { "32-bit" }), $wslText)
-}
-
-function Test-ModernWsl {
-  # The current WSL (from the Store or its MSI) answers --version; the old built-in one of early Windows 10 doesn't.
-  $wsl = Get-WslPath
-  if (-not $wsl) { return $false }
-  return (Invoke-Limited $wsl @("--version") 120 -Quiet).Code -eq 0
-}
-
-function Install-WslMsi {
-  # Fallback when "wsl --install/--update" isn't available (older Windows 10): the official WSL package.
-  try {
-    $release = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/microsoft/WSL/releases/latest" -Headers @{ "User-Agent" = "clipforge-setup" }
-    $asset = $release.assets | Where-Object { $_.name -like "*x64.msi" } | Select-Object -First 1
-    if (-not $asset) { return $false }
-    $msi = Join-Path $InstallDir $asset.name
-    Get-File $asset.browser_download_url $msi "WSL $($release.tag_name)"
-    $signature = Get-AuthenticodeSignature $msi
-    if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Microsoft Corporation") {
-      Remove-Item $msi -Force
-      Say "   The downloaded WSL package is not signed by Microsoft; not installing it."
-      return $false
-    }
-    $process = Start-Process msiexec.exe -ArgumentList @("/i", "`"$msi`"", "/quiet", "/norestart") -Wait -PassThru
-    Remove-Item $msi -Force -ErrorAction SilentlyContinue
-    return ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010)
-  } catch {
-    Say "   Could not install the WSL package: $($_.Exception.Message)"
-    return $false
-  }
-}
-
-function Get-VirtualizationProblem {
-  # WSL 2 runs Linux in a small virtual machine. Returns $null when Windows can run one, otherwise
-  # "restart" (Windows hasn't restarted since Virtual Machine Platform was turned on), "launchtype"
-  # (Windows' hypervisor is switched off in the boot settings) or "firmware" (virtualization is
-  # switched off in the BIOS/UEFI).
-  if ((Get-CimInstance Win32_ComputerSystem).HypervisorPresent) { return $null }
-  if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { return "restart" }
-  $boot = Invoke-Limited (Join-Path $env:WINDIR "System32\bcdedit.exe") @("/enum", "{current}") 60 -Quiet
-  if (($boot.Lines -join "`n") -match "hypervisorlaunchtype\s+Off") { return "launchtype" }
-  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-  if (-not $cpu.VirtualizationFirmwareEnabled) { return "firmware" }
-  return "restart"
-}
-
-function Stop-Virtualization([string]$Problem) {
-  if ($Problem -eq "firmware") {
-    Stop-Install ("Virtualization is switched off in this PC's BIOS/UEFI, and WSL 2 needs it. Restart the PC, open the " +
-                  "BIOS/UEFI settings (usually F2, F10, F12 or Del while it starts), turn on 'Intel Virtualization " +
-                  "Technology (VT-x)' or 'SVM Mode' (AMD), save, then run CLIPFORGE setup again.")
-  }
-  Stop-Install ("Windows still can't run virtual machines after a restart, and WSL 2 needs them. Check Task Manager > " +
-                "Performance > CPU > 'Virtualization': if it says Disabled, turn it on in the BIOS/UEFI ('Intel VT-x' or " +
-                "'SVM Mode'), then run CLIPFORGE setup again.")
-}
-
-function Step-Wsl {
-  Say "Checking WSL 2 (Windows Subsystem for Linux)"
-  $marker = Join-Path $InstallDir "wsl-restart-requested"
-  $restart = $false
-  foreach ($feature in @("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")) {
-    $state = "$((Get-WindowsOptionalFeature -Online -FeatureName $feature).State)"
-    if ($state -eq "Enabled") { continue }
-    if ($state -eq "EnablePending") {
-      Say "   The Windows feature $feature is turned on and waits for a restart"
-      $restart = $true
-      continue
-    }
-    Say "   Turning on the Windows feature $feature"
-    $result = Enable-WindowsOptionalFeature -Online -FeatureName $feature -All -NoRestart -WarningAction SilentlyContinue
-    if ($result.RestartNeeded) { $restart = $true }
-  }
-  $modern = Test-ModernWsl
-  if (-not $modern) {
-    Say "   Installing the current WSL release (a few minutes)"
-    $code = Invoke-Wsl @("--install", "--no-distribution", "--web-download") 900
-    $modern = Test-ModernWsl
-    # A command that ran out of time won't do better a second time: go straight to the package.
-    if (-not $modern -and $code -ne 1460) {
-      [void](Invoke-Wsl @("--update", "--web-download") 900)
-      $modern = Test-ModernWsl
-    }
-    if (-not $modern) {
-      Say "   Downloading the WSL package from Microsoft's GitHub releases"
-      [void](Install-WslMsi)
-      $modern = Test-ModernWsl
-    }
-  } else {
-    [void](Invoke-Wsl @("--update", "--web-download") 900)
-  }
-  if ($restart) {
-    Request-Restart "Windows needs to restart to finish turning on WSL 2. Setup continues automatically after you sign in again."
-  }
-  if (-not $modern) {
-    if (Test-Path $marker) {
-      # Already restarted once for this: don't ask again in a loop, explain what to do instead.
-      Remove-Item $marker -Force
-      Stop-Install ("WSL could not be installed automatically. Install 'Windows Subsystem for Linux' from the Microsoft Store " +
-                    "(or run Windows Update), restart, then run CLIPFORGE setup again.")
-    }
-    Request-Restart "WSL is not ready yet; a restart usually finishes its installation."
-  }
-  $problem = Get-VirtualizationProblem
-  if ($problem -eq "launchtype") {
-    Say "   Windows' hypervisor is switched off in the boot settings; switching it on"
-    [void](Invoke-Limited (Join-Path $env:WINDIR "System32\bcdedit.exe") @("/set", "hypervisorlaunchtype", "auto") 60)
-    Request-Restart "Windows needs to restart to start its hypervisor (WSL 2 needs it). Setup continues automatically after you sign in again."
-  }
-  if ($problem -eq "firmware") { Stop-Virtualization $problem }
-  if ($problem -eq "restart") {
-    if (Test-Path $marker) { Remove-Item $marker -Force; Stop-Virtualization "restart" }
-    Request-Restart "Windows needs to restart before it can run WSL 2 (Virtual Machine Platform is on but not running yet). Setup continues automatically after you sign in again."
-  }
+  $marker = Join-Path $InstallDir "previous-linux-version"
   Remove-Item $marker -Force -ErrorAction SilentlyContinue
-  [void](Invoke-Wsl @("--set-default-version", "2") 300)
-  Say "   WSL 2 is ready"
+  if ($wsl) {
+    $list = Invoke-Limited $wsl @("--list", "--quiet") 60 -Quiet
+    if ($list.Code -eq 0 -and $list.Lines -contains $Distro) {
+      Say "Stopping the older, Linux-based CLIPFORGE"
+      Get-CimInstance Win32_Process -Filter "Name = 'wsl.exe'" | Where-Object { $_.CommandLine -like "*clipforge-keepalive*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      [void](Invoke-Limited $wsl @("--terminate", $Distro) 120 -Quiet)
+      Set-Content -Path $marker -Value "found"
+    }
+  }
+  # Continue-after-restart entries left by the older version.
+  try { Unregister-ScheduledTask -TaskName "CLIPFORGE setup" -Confirm:$false -ErrorAction Stop } catch { }
+  try { Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "ClipForgeSetup" -ErrorAction Stop } catch { }
 }
 
-function Step-Distro {
-  if (Test-DistroExists) {
-    Say "Using the existing ClipForge Linux environment (your data is kept)"
-    return
+function Step-RemovePrevious {
+  # Only when you said yes: delete the older version's Linux environment and its data.
+  $wsl = Get-WslPath
+  if ($wsl) {
+    Say "Removing the older, Linux-based CLIPFORGE and its data"
+    [void](Invoke-Limited $wsl @("--unregister", $Distro) 600)
   }
-  $tarball = Join-Path $InstallDir "ubuntu-rootfs.tar.gz"
-  $kept = (Test-Path $tarball) -and ((Get-FileHash -Algorithm SHA256 -Path $tarball).Hash.ToLower() -eq $RootfsSha256)
-  if ($kept) {
-    Say "Using Ubuntu 24.04 for WSL downloaded earlier (checksum verified)"
-  } else {
-    Say "Downloading Ubuntu 24.04 for WSL (about 340 MB)"
-    Get-File $RootfsUrl $tarball "Ubuntu"
-    $hash = (Get-FileHash -Algorithm SHA256 -Path $tarball).Hash.ToLower()
-    if ($hash -ne $RootfsSha256) {
-      Remove-Item $tarball -Force
-      Stop-Install "The Ubuntu download is damaged (checksum mismatch). Run setup again."
-    }
-    Say "   Checksum verified"
-  }
-  Say "Creating the ClipForge Linux environment"
-  $target = Join-Path $InstallDir "wsl"
-  New-Item -ItemType Directory -Force -Path $target | Out-Null
-  $import = Invoke-Limited (Get-Wsl) @("--import", $Distro, $target, $tarball, "--version", "2") 1800
-  if ($import.Code -ne 0) {
-    # The download stays (verified) so the next attempt doesn't fetch it again.
-    if (($import.Lines -join " ") -match "HCS_E_|virtualization|Virtual Machine Platform|0x80370102") {
-      $problem = Get-VirtualizationProblem
-      if (-not $problem) { $problem = "restart" }
-      if ($problem -eq "firmware") { Stop-Virtualization $problem }
-      Stop-Install ("Windows can't start WSL 2's virtual machine yet. Restart Windows and run CLIPFORGE setup again " +
-                    "(it continues from here). If it still fails after a restart, check Task Manager > Performance > CPU > " +
-                    "'Virtualization': if it says Disabled, turn it on in the BIOS/UEFI.")
-    }
-    Stop-Install "WSL could not create the Linux environment (wsl --import exit code $($import.Code))."
-  }
-  Remove-Item $tarball -Force -ErrorAction SilentlyContinue
-  Configure-WslMemory
+  Remove-Item (Join-Path $InstallDir "wsl") -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $InstallDir "previous-linux-version") -Force -ErrorAction SilentlyContinue
 }
 
-function Configure-WslMemory {
-  # WSL 2 may use half the PC's memory by default; the speech model needs ~5.5 GB. Only an absent
-  # .wslconfig is created, so settings made for other Linux environments are never changed.
+function Install-Uv {
+  if (Test-Path $Uv) { return }
+  $wheel = Join-Path $InstallDir "uv-download.zip"
+  Get-File $UvUrl $wheel "uv (Python package manager)"
+  $hash = (Get-FileHash -Algorithm SHA256 -Path $wheel).Hash.ToLower()
+  if ($hash -ne $UvSha256) {
+    Remove-Item $wheel -Force
+    Stop-Install "The uv download is damaged (checksum mismatch). Run setup again."
+  }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [IO.Compression.ZipFile]::OpenRead($wheel)
   try {
-    $config = Join-Path $env:USERPROFILE ".wslconfig"
-    if (Test-Path $config) { return }
-    $memoryGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
-    $give = [math]::Max(6, [math]::Min($memoryGb - 4, [math]::Round($memoryGb * 0.7)))
-    Set-Content -Path $config -Encoding ASCII -Value "[wsl2]`r`n# Set by the CLIPFORGE installer: memory for Linux environments (CLIPFORGE needs about 6 GB).`r`nmemory=${give}GB`r`n"
-    Say "   Gave WSL 2 up to $give GB of memory ($config)"
-  } catch {
-    Say "   Note: could not adjust WSL 2 memory ($($_.Exception.Message)); the default is used."
+    $entry = $zip.GetEntry($UvExeInWheel)
+    if (-not $entry) { Stop-Install "The uv download doesn't contain uv.exe." }
+    New-Item -ItemType Directory -Force -Path (Split-Path $Uv) | Out-Null
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $Uv, $true)
+  } finally {
+    $zip.Dispose()
+    Remove-Item $wheel -Force -ErrorAction SilentlyContinue
   }
+  Say "   uv checksum verified"
 }
 
-function Step-System {
-  $script = ConvertTo-WslPath (Join-Path $AppDir "installer\windows\scripts\provision.sh")
-  $code = Invoke-InDistro @("bash", $script, "system")
-  if ($code -ne 0) { Stop-Install "Installing Docker Engine failed (exit code $code)." }
-  # Restart the environment so systemd (and with it Docker) starts automatically from now on.
-  [void](Invoke-Limited (Get-Wsl) @("--terminate", $Distro) 120 -Quiet)
+function Step-Runtime {
+  Say "Downloading Python and CLIPFORGE's components (about 1.2 GB the first time; 5-15 minutes)"
+  Install-Uv
+  $code = Invoke-Native $Uv @("python", "install", "3.12")
+  if ($code -ne 0) { Stop-Install "Python could not be installed (uv exit code $code). Check the internet connection and run setup again." }
+  $code = Invoke-Native $Uv @("sync", "--frozen", "--no-dev", "--python", "3.12", "--project", (Join-Path $AppDir "backend"))
+  if ($code -ne 0) { Stop-Install "CLIPFORGE's components could not be installed (uv exit code $code). Check the internet connection and run setup again." }
+  # The download cache isn't needed once everything is installed (an update downloads what changed).
+  Remove-Item $env:UV_CACHE_DIR -Recurse -Force -ErrorAction SilentlyContinue
+  Say "   Python and all components are installed"
 }
 
-function Step-App {
-  New-Item -ItemType Directory -Force -Path $Inbox | Out-Null
-  $readme = Join-Path $Inbox "README.txt"
-  if (-not (Test-Path $readme)) {
-    Set-Content -Path $readme -Encoding UTF8 -Value @"
-CLIPFORGE inbox
-===============
-Make a folder here for each kind of video (for example "Podcast"), then in CLIPFORGE open
-My Videos > Process a folder > Watch a CLIPFORGE folder and choose it. Every video you put in
-that folder is then turned into clips automatically, with the settings you chose for it.
-"@
-  }
-  $script = ConvertTo-WslPath (Join-Path $AppDir "installer\windows\scripts\provision.sh")
-  $code = Invoke-InDistro @("bash", $script, "app", (ConvertTo-WslPath $AppDir), (ConvertTo-WslPath $Inbox), $Inbox)
-  if ($code -ne 0) { Stop-Install "Building CLIPFORGE failed (exit code $code). Running setup again resumes where it stopped." }
+function Invoke-ClipForge([string[]]$Arguments) {
+  return Invoke-Native $Python (@("-m", "clipforge.cli", "desktop") + $Arguments + @("--root", $InstallDir))
+}
+
+function Step-Setup {
+  Say "Creating CLIPFORGE's settings and database"
+  $code = Invoke-ClipForge @("init")
+  if ($code -ne 0) { Stop-Install "CLIPFORGE's database could not be created (exit code $code). The details are in $InstallDir\logs." }
 }
 
 function Step-Models {
-  $arguments = @("bash", "/opt/clipforge/installer/windows/scripts/provision.sh", "models")
-  if ($env:CLIPFORGE_SKIP_SPEECH_MODEL -eq "1") { $arguments += "vision-only" }  # automated tests only
-  $code = Invoke-InDistro $arguments
+  $arguments = @("models")
+  if ($env:CLIPFORGE_SKIP_SPEECH_MODEL -ne "1") { $arguments += "--vosk" }  # skipped only by the automated tests
+  Say "Downloading the AI models (the speech model is 1.8 GB; progress below)"
+  $code = Invoke-ClipForge $arguments
   if ($code -ne 0) {
-    Say "   The models could not be downloaded right now. CLIPFORGE works without them except for speech recognition;"
-    Say "   Settings shows how to retry. (exit code $code)"
+    Say "   The models could not all be downloaded right now. CLIPFORGE works without them except for speech recognition;"
+    Say "   run setup again later to finish. (exit code $code)"
   }
 }
 
 function Step-Start {
   $launcher = Join-Path $AppDir "installer\windows\scripts\clipforge.ps1"
   $code = Invoke-Native (Join-Path $PSHOME "powershell.exe") @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $launcher, "start", "-NoWindow")
-  if ($code -ne 0) { Stop-Install "CLIPFORGE was installed but did not start. Use the CLIPFORGE shortcut to try again." }
+  if ($code -ne 0) { Stop-Install "CLIPFORGE was installed but did not start. The details are in $InstallDir\logs." }
   Say "CLIPFORGE is running at http://localhost:3000"
 }
 
-$steps = [ordered]@{ preflight = { Step-Preflight }; wsl = { Step-Wsl }; distro = { Step-Distro }; system = { Step-System };
-                     app = { Step-App }; models = { Step-Models }; start = { Step-Start } }
+$steps = [ordered]@{ preflight = { Step-Preflight }; previous = { Step-Previous }; runtime = { Step-Runtime };
+                     setup = { Step-Setup }; models = { Step-Models }; start = { Step-Start } }
 try {
   if ($Step -eq "check") { Step-Check }
+  elseif ($Step -eq "remove-previous") { Step-RemovePrevious }
   elseif ($Step -eq "all") { foreach ($name in $steps.Keys) { & $steps[$name] } }
   else { & $steps[$Step] }
 } catch {

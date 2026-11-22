@@ -159,7 +159,9 @@ def test_youtube_public_post_is_handed_to_youtubes_scheduler_then_confirmed(plat
         offsets = {j.payload["offset_hours"] for j in db.execute(select(Job).where(Job.type == "analytics.collect")).scalars()}
         assert offsets == {1, 24, 72, 168, 672}
     upcoming = owner_client.get("/api/schedule").json()
-    assert upcoming["items"] == []
+    assert upcoming["items"] == [] and upcoming["ready"] == []
+    # The Schedule page lists it under "recently posted".
+    assert [p["package_id"] for p in upcoming["recent"]] == [str(package_id)]
 
 
 @pytest.mark.contract
@@ -282,6 +284,9 @@ def test_instagram_post_later_waits_in_the_queue_until_its_preparation_time(plat
     owner_client.post(f"/api/packages/{package_id}/unschedule")
     assert all(j.status == "cancelled" for j in _jobs(package_id))
     assert _get(package_id).status == "ready"
+    # Back on the Schedule page's "ready to schedule" list.
+    listing = owner_client.get("/api/schedule").json()
+    assert listing["items"] == [] and [p["package_id"] for p in listing["ready"]] == [str(package_id)]
 
 
 @pytest.mark.contract

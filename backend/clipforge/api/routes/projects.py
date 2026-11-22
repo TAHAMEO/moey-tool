@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ...db.base import get_db
+from ...db.base import get_db, utcnow
 from ...db.models import (
     Clip,
     Job,
@@ -264,7 +264,26 @@ def upcoming_posts(db: Session = Depends(get_db), _: Principal = Depends(viewer)
                       "last_error": remote.last_error if remote else None,
                       "thumbnail_url": _asset_url(package.thumbnail_asset_id or package.cover_asset_id)})
     items.sort(key=lambda i: (i["status"] != "missed", i["scheduled_at"].timestamp() if i["scheduled_at"] else float("inf")))
-    return {"timezone": schedule.zone(db).key, "items": items}
+
+    # Finished clips not scheduled yet, and what went out in the last two weeks (the Schedule page).
+    def brief(package: OutputPackage, clip: Clip, project: Project) -> dict:
+        return {"package_id": str(package.id), "platform": package.platform, "status": package.status,
+                "title": package.title or clip.title or "Untitled", "clip_rank": clip.rank,
+                "project_id": str(project.id), "project_title": project.title, "privacy": package.privacy,
+                "duration_s": round(clip.end_s - clip.start_s, 1),
+                "published_at": package.updated_at,
+                "thumbnail_url": _asset_url(package.thumbnail_asset_id or package.cover_asset_id)}
+
+    base = (select(OutputPackage, Clip, Project).join(Clip, Clip.id == OutputPackage.clip_id)
+            .join(Project, Project.id == Clip.project_id))
+    ready = [brief(*row) for row in db.execute(
+        base.where(OutputPackage.status.in_(("ready", "approved", "failed")))
+        .order_by(Project.created_at.desc(), Clip.rank).limit(200)).all()]
+    since = utcnow() - timedelta(days=14)
+    recent = [brief(*row) for row in db.execute(
+        base.where(OutputPackage.status == "published", OutputPackage.updated_at >= since)
+        .order_by(OutputPackage.updated_at.desc()).limit(50)).all()]
+    return {"timezone": schedule.zone(db).key, "items": items, "ready": ready, "recent": recent}
 
 
 @router.delete("/projects/{project_id}")

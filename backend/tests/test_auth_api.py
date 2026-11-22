@@ -4,7 +4,7 @@ from tests.conftest import OWNER_EMAIL, OWNER_PASSWORD
 
 
 def test_first_run_setup_flow(client):
-    assert client.get("/api/auth/status").json() == {"setup_required": True}
+    assert client.get("/api/auth/status").json() == {"setup_required": True, "local": False}
     weak = client.post("/api/auth/setup", json={"email": OWNER_EMAIL, "password": "short"})
     assert weak.status_code == 400 and weak.json()["error"]["code"] == "weak_password"
     ok = client.post("/api/auth/setup", json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD})
@@ -12,7 +12,7 @@ def test_first_run_setup_flow(client):
     body = ok.json()
     assert body["role"] == "owner" and body["csrf_token"]
     assert "cf_session" in client.cookies
-    assert client.get("/api/auth/status").json() == {"setup_required": False}
+    assert client.get("/api/auth/status").json() == {"setup_required": False, "local": False}
     again = client.post("/api/auth/setup", json={"email": "x@example.com", "password": OWNER_PASSWORD})
     assert again.status_code == 409
 

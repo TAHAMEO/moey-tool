@@ -36,6 +36,7 @@ RUN python3.12 -m venv /opt/uv && /opt/uv/bin/pip install --no-cache-dir "uv==${
 WORKDIR /app/backend
 # Dependencies first (cached unless the lock file changes), then the application.
 COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
+COPY backend/vendor-wheels/ ./vendor-wheels/
 RUN /opt/uv/bin/uv sync --frozen --no-dev --no-install-project
 COPY backend/ ./
 RUN /opt/uv/bin/uv sync --frozen --no-dev

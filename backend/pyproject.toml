@@ -48,9 +48,14 @@ dependencies = [
     # --- Publishing and scheduling ---
     "tzdata==2026.6",
     "aiohttp>=3.9",
-    "instagram-python-sdk @ git+https://github.com/Inoue-AI/Inoue-AI-Instagram-SDK.git@5fcda416135c6d24277384b6208b98faf4f70cd8",
+    "instagram-python-sdk==0.1.0",  # vendor-wheels/: built from git commit 5fcda41 (no Git needed to install)
     # --- Storage ---
     "boto3==1.44.5",
+    # --- The Windows app (no Docker, no Linux): PostgreSQL 16 with pgvector, FFmpeg and Node.js
+    #     arrive as ordinary packages, checksum-pinned in uv.lock like everything else ---
+    "pgserver==0.1.4; sys_platform == 'win32'",
+    "ffmpeg-binaries==1.1.0; sys_platform == 'win32'",
+    "nodejs-wheel-binaries==24.19.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -103,3 +108,6 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Body", "f
 [tool.ruff.lint.per-file-ignores]
 # Vendored third-party code (AutoClip, MIT) is kept close to upstream to ease re-syncing.
 "clipforge/vendor/**" = ["BLE001", "RUF059", "I001", "FURB167", "SIM115", "PLW1510"]
+
+[tool.uv.sources]
+instagram-python-sdk = { path = "vendor-wheels/instagram_python_sdk-0.1.0-py3-none-any.whl" }

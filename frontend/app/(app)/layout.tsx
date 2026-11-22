@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { BarChart3, Bot, Brain, Clapperboard, GraduationCap, LogOut, Menu, Moon, OctagonPause, Settings, Sparkles, Sun, X } from "lucide-react";
+import { BarChart3, Bot, Brain, CalendarClock, Clapperboard, GraduationCap, LogOut, Menu, Moon, OctagonPause, Settings, Sparkles, Sun, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -15,6 +15,7 @@ const NAV = [
   { href: "/", label: "Brain Chat", icon: Brain },
   { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
   { href: "/videos", label: "My Videos", icon: Clapperboard },
+  { href: "/schedule", label: "Schedule", icon: CalendarClock },
   { href: "/connections", label: "AI Connections", icon: Bot },
   { href: "/learning", label: "Learning Center", icon: GraduationCap },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -111,13 +112,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center justify-between px-2">
             <div className="min-w-0">
               <p className="truncate text-[13px] font-medium">{me.display_name || me.email}</p>
-              <p className="text-[12px] capitalize text-faint">{me.role}</p>
+              {!me.local && <p className="text-[12px] capitalize text-faint">{me.role}</p>}
             </div>
             <div className="flex">
               <ThemeToggle />
-              <button onClick={signOut} className="rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-text" aria-label="Sign out">
-                <LogOut className="size-4" />
-              </button>
+              {!me.local && (
+                <button onClick={signOut} className="rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-text" aria-label="Sign out">
+                  <LogOut className="size-4" />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -135,9 +138,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             {nav}
             <div className="mt-6 flex gap-1 px-1">
               <ThemeToggle />
-              <button onClick={signOut} className="rounded-lg p-2 text-muted hover:bg-surface-2" aria-label="Sign out">
-                <LogOut className="size-4" />
-              </button>
+              {!me.local && (
+                <button onClick={signOut} className="rounded-lg p-2 text-muted hover:bg-surface-2" aria-label="Sign out">
+                  <LogOut className="size-4" />
+                </button>
+              )}
             </div>
           </aside>
         </div>

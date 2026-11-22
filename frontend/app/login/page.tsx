@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthCard } from "@/components/AuthCard";
 import { Button, Input, Label } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
@@ -15,6 +15,11 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const { signIn } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    // The single-person Windows app has no sign-in: go straight in.
+    api<{ local?: boolean }>("/auth/status").then((status) => { if (status.local) router.replace("/"); }).catch(() => undefined);
+  }, [router]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();

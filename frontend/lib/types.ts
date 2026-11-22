@@ -1,4 +1,4 @@
-export type Me = { id: string; email: string; display_name: string; role: string; csrf_token: string };
+export type Me = { id: string; email: string; display_name: string; role: string; csrf_token: string; local?: boolean };
 
 export type JobSummary = {
   id: string;
@@ -117,6 +117,14 @@ export type ScheduleItem = {
   mode: "youtube" | "held" | "now"; privacy: string; uploaded: boolean; remote_status: string | null; on_hold: boolean;
   last_error: string | null; thumbnail_url: string | null;
 };
+
+export type ReadyPost = {
+  package_id: string; platform: "youtube" | "instagram"; status: string; title: string; clip_rank: number;
+  project_id: string; project_title: string; privacy: string; duration_s: number; published_at: string | null;
+  thumbnail_url: string | null;
+};
+
+export type ScheduleOverview = { timezone: string; items: ScheduleItem[]; ready: ReadyPost[]; recent: ReadyPost[] };
 
 export type Clip = {
   id: string;

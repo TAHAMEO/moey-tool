@@ -4,8 +4,11 @@
 
     clipforge.ps1 open      start CLIPFORGE if needed (small "Starting..." window), then open it in the browser
     clipforge.ps1 start     start it in the background (used at sign-in when "Start with Windows" is on)
-    clipforge.ps1 stop      stop CLIPFORGE and its Linux environment (frees the memory it uses)
-    clipforge.ps1 status    show what is running
+    clipforge.ps1 stop      stop CLIPFORGE (frees the memory it uses)
+    clipforge.ps1 status    show whether it is running
+
+  CLIPFORGE runs as ordinary Windows programs (Python, PostgreSQL, Node.js) from its installation
+  folder, listening on this PC only (127.0.0.1). No Docker, no Linux.
 #>
 [CmdletBinding()]
 param(
@@ -14,7 +17,7 @@ param(
   [switch]$NoWindow  # print progress instead of showing a window (used by the installer)
 )
 
-# A 32-bit PowerShell (as started by setup.exe) can't see wsl.exe: continue in 64-bit PowerShell.
+# A 32-bit PowerShell (as started by setup.exe) continues as 64-bit.
 if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
   $native = Join-Path $env:WINDIR "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
   $forward = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, $Action)
@@ -25,16 +28,26 @@ if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProces
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$env:WSL_UTF8 = "1"
-$Distro = "ClipForge"
-$Url = "http://localhost:3000"
-$Provision = "/opt/clipforge/installer/windows/scripts/provision.sh"
-# The installation folder (setup lets you choose it): this script is in <folder>\app\installer\windows\scripts.
-$InstallDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
-$Log = Join-Path $InstallDir "clipforge.log"
+# This script is in <installation folder>\app\installer\windows\scripts.
+$Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
+$Python = Join-Path $Root "runtime\venv\Scripts\python.exe"
+$PythonW = Join-Path $Root "runtime\venv\Scripts\pythonw.exe"
+$Log = Join-Path $Root "logs\launcher.log"
+
+function Get-Port {
+  $config = Join-Path $Root "config.env"
+  if (Test-Path $config) {
+    foreach ($line in Get-Content $config) {
+      if ($line -match '^\s*CLIPFORGE_WEB_PORT\s*=\s*(\d+)\s*$') { return $Matches[1] }
+    }
+  }
+  return "3000"
+}
+$Url = "http://localhost:$(Get-Port)"
 
 function Write-Log([string]$Message) {
   $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
+  New-Item -ItemType Directory -Force -Path (Split-Path $Log) | Out-Null
   Add-Content -Path $Log -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
   if ($NoWindow) { [Console]::Out.WriteLine($line) }
 }
@@ -45,35 +58,17 @@ function Show-Message([string]$Text, [string]$Icon = "Information") {
   [void][System.Windows.Forms.MessageBox]::Show($Text, "CLIPFORGE", "OK", $Icon)
 }
 
-function Get-WslPath {
-  $candidates = @()
-  if ($env:WINDIR) { $candidates += Join-Path $env:WINDIR "System32\wsl.exe" }
-  $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
-  if ($programFiles) { $candidates += Join-Path $programFiles "WSL\wsl.exe" }
-  foreach ($candidate in $candidates) { if (Test-Path -LiteralPath $candidate) { return $candidate } }
-  $command = Get-Command "wsl.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($command) { return $command.Source }
-  return $null
-}
-
-$Wsl = Get-WslPath
-
-function Invoke-Wsl([string[]]$Arguments) {
-  # Windows PowerShell 5.1 turns a program's stderr lines into errors; never let them abort this script.
+function Invoke-Desktop([string[]]$Arguments) {
+  # "@() |": the program's input has already ended, so nothing can wait for an answer.
   $previous = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    $lines = @() | & $Wsl @Arguments 2>&1  # an input that has already ended: nothing can wait for an answer
-    return @{ Code = $LASTEXITCODE; Lines = @($lines | ForEach-Object { ("$_" -replace "`0", "").Trim() }) }
+    $lines = @() | & $Python -m clipforge.cli desktop @Arguments --root $Root 2>&1
+    foreach ($line in $lines) { Write-Log "   $line" }
+    return $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previous
   }
-}
-
-function Test-Installed {
-  if (-not $Wsl) { return $false }
-  $result = Invoke-Wsl @("--list", "--quiet")
-  return ($result.Code -eq 0 -and $result.Lines -contains $Distro)
 }
 
 function Test-Ready {
@@ -81,32 +76,31 @@ function Test-Ready {
   catch { return $false }
 }
 
-function Get-KeepAlive {
-  Get-CimInstance Win32_Process -Filter "Name = 'wsl.exe'" | Where-Object { $_.CommandLine -like "*clipforge-keepalive*" }
+function Get-Status {
+  $file = Join-Path $Root "run\status.txt"
+  if (Test-Path $file) { return (Get-Content $file -Raw).Trim() }
+  return ""
 }
 
 function Start-ClipForge {
-  # WSL stops a Linux environment once nothing uses it; this hidden process keeps CLIPFORGE's running.
-  if (-not (Get-KeepAlive)) {
-    Start-Process -FilePath $Wsl -WindowStyle Hidden -ArgumentList @(
-      "--distribution", $Distro, "--user", "root", "--exec", "bash", "-c", "`"exec -a clipforge-keepalive sleep infinity`"")
-    Write-Log "Started the Linux environment"
-  }
-  return Start-Process -FilePath $Wsl -WindowStyle Hidden -PassThru -ArgumentList @(
-    "--distribution", $Distro, "--user", "root", "--exec", "bash", $Provision, "start")
+  # pythonw.exe has no window: CLIPFORGE runs in the background until "Stop CLIPFORGE".
+  Start-Process -FilePath $PythonW -WindowStyle Hidden -WorkingDirectory $Root `
+    -ArgumentList "-m clipforge.cli desktop run --root `"$Root`""
+  Write-Log "Starting"
 }
 
 function Wait-Ready([int]$Minutes) {
   $deadline = (Get-Date).AddMinutes($Minutes)
   while ((Get-Date) -lt $deadline) {
     if (Test-Ready) { return $true }
+    if ((Get-Status) -like "failed*") { return $false }
     Start-Sleep -Seconds 2
   }
   return $false
 }
 
 function Show-Starting([int]$Minutes) {
-  # A small window while the containers start (usually 20-60 seconds).
+  # A small window while CLIPFORGE starts (usually 10-30 seconds).
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
   $form = New-Object System.Windows.Forms.Form
   $form.Text = "CLIPFORGE"
@@ -127,31 +121,30 @@ function Show-Starting([int]$Minutes) {
   $form.Controls.AddRange(@($label, $bar))
   $deadline = (Get-Date).AddMinutes($Minutes)
   $timer = New-Object System.Windows.Forms.Timer
-  $timer.Interval = 2000
+  $timer.Interval = 1000
   $timer.Add_Tick({
     if (Test-Ready) { $timer.Stop(); $form.Tag = "ready"; $form.Close() }
-    elseif ((Get-Date) -gt $deadline) { $timer.Stop(); $form.Tag = "timeout"; $form.Close() }
+    elseif ((Get-Status) -like "failed*" -or (Get-Date) -gt $deadline) { $timer.Stop(); $form.Tag = "timeout"; $form.Close() }
   })
   $form.Add_Shown({ $timer.Start() })
   [void]$form.ShowDialog()
   return $form.Tag -eq "ready"
 }
 
-if (-not (Test-Installed)) {
-  Show-Message "CLIPFORGE's Linux environment is missing. Run the CLIPFORGE setup again to repair it." "Warning"
+if (-not (Test-Path $PythonW)) {
+  Show-Message "CLIPFORGE isn't completely installed. Run the CLIPFORGE setup again to repair it." "Warning"
   exit 1
 }
 
 switch ($Action) {
   "status" {
-    (Invoke-Wsl @("--distribution", $Distro, "--user", "root", "--exec", "bash", $Provision, "status")).Lines | ForEach-Object { Write-Output $_ }
-    if (Test-Ready) { Write-Output "CLIPFORGE is running at $Url" } else { Write-Output "CLIPFORGE is not answering at $Url" }
+    [void](Invoke-Desktop @("status"))
+    if (Test-Ready) { Write-Output "CLIPFORGE is running at $Url" } else { Write-Output "CLIPFORGE is not running ($(Get-Status))" }
   }
   "stop" {
     Write-Log "Stopping"
-    [void](Invoke-Wsl @("--distribution", $Distro, "--user", "root", "--exec", "bash", $Provision, "stop"))
-    Get-KeepAlive | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    [void](Invoke-Wsl @("--terminate", $Distro))
+    $code = Invoke-Desktop @("stop")
+    if ($code -ne 0) { Show-Message "CLIPFORGE didn't stop in time. The log is in $Root\logs." "Warning"; exit 1 }
     Show-Message "CLIPFORGE is stopped. Scheduled Instagram posts wait until you start it again; YouTube posts handed to YouTube still go out."
   }
   default {
@@ -159,12 +152,12 @@ switch ($Action) {
       if ($Action -eq "open") { Start-Process $Url }
       exit 0
     }
-    Write-Log "Starting"
-    [void](Start-ClipForge)
-    $ready = if ($NoWindow -or $Action -eq "start") { Wait-Ready 10 } else { Show-Starting 5 }
+    Start-ClipForge
+    $ready = if ($NoWindow -or $Action -eq "start") { Wait-Ready 5 } else { Show-Starting 5 }
     if (-not $ready) {
-      Write-Log "Did not become ready in time"
-      Show-Message "CLIPFORGE didn't start in time. Try again in a minute; if it keeps happening, the log is in $Log" "Warning"
+      $status = Get-Status
+      Write-Log "Did not become ready ($status)"
+      Show-Message "CLIPFORGE didn't start ($status). Try again in a minute; if it keeps happening, the logs are in $Root\logs" "Warning"
       exit 1
     }
     Write-Log "Ready at $Url"

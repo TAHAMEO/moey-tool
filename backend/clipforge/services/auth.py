@@ -56,6 +56,26 @@ def create_owner(db: Session, *, email: str, password: str, display_name: str = 
     return user
 
 
+LOCAL_OWNER_EMAIL = "owner@clipforge.local"
+
+
+def local_owner(db: Session) -> User:
+    """The one person using a single-person installation (``local_mode``); created on first use."""
+    db.execute(text("SELECT pg_advisory_xact_lock(424242)"))
+    user = db.execute(select(User).where(User.role == "owner", User.is_active.is_(True))
+                      .order_by(User.created_at).limit(1)).scalar_one_or_none()
+    if user is None:
+        import secrets
+
+        # Nobody signs in with it: the password is random and never shown.
+        user = User(email=LOCAL_OWNER_EMAIL, password_hash=passwords.hash_password(secrets.token_urlsafe(48)),
+                    display_name="You", role="owner")
+        db.add(user)
+        db.flush()
+        audit(db, "auth.local_owner", user_id=user.id, target_type="user", target_id=user.id)
+    return user
+
+
 def create_user(db: Session, *, email: str, password: str, role: str, created_by: uuid.UUID, ip: str | None = None) -> User:
     if role not in ROLES or role == "owner":
         raise AuthError("Invalid role.", code="invalid_role")

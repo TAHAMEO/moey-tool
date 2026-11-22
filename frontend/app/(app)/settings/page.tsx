@@ -36,7 +36,7 @@ const PLATFORM_NAMES: Record<string, string> = { youtube: "YouTube", instagram: 
 
 export default function SettingsPage() {
   const toast = useToast();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const { data: settings, reload } = useResource<AllSettings>("/settings");
   const save = useSettingsSaver(reload);
   const [active, setActive] = useState("publishing");
@@ -91,7 +91,7 @@ export default function SettingsPage() {
           <LiveSection />
           <LibrarySection />
           <AutomationSection {...props} reload={reload} />
-          <SecuritySection />
+          {!me?.local && <SecuritySection />}
           <DataSection />
           <SettingsSection id="advanced" title="Advanced">
             <UISection {...props} />
