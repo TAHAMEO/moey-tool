@@ -325,7 +325,11 @@ def build_filtergraph(plan: EditPlan, path: CropPath, *, has_video: bool, has_au
             parts.append("[mus][sp1]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400[duck]")
             parts.append("[sp2][duck]amix=inputs=2:normalize=0:duration=first[mix]")
             speech = "[mix]"
-        parts.append(f"{speech}loudnorm=I={plan.loudness_lufs}:TP=-1.5:LRA=11,aresample=48000[aout]")
+        # loudnorm leaves the channel layout open; FFmpeg 6.0 (the Windows build) then can't pick one
+        # for the AAC encoder when it re-initialises the graph mid-render ("Cannot select channel
+        # layout … format_out"). Naming the output format makes every FFmpeg version agree.
+        parts.append(f"{speech}loudnorm=I={plan.loudness_lufs}:TP=-1.5:LRA=11,aresample=48000,"
+                     f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[aout]")
         audio_out = "[aout]"
     return ";".join(parts), audio_out
 

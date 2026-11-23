@@ -84,6 +84,10 @@ jobs:
         with:
           name: ClipForge-Setup
           path: setup
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+          sparse-checkout: installer/windows/tests
       - name: setup.exe, silently - install, run, stop, start, update, uninstall
         shell: powershell
         env:
@@ -159,6 +163,14 @@ jobs:
           $store = & $py -c "import pathlib,tempfile; from clipforge.storage import LocalStorage; t=pathlib.Path(tempfile.mkdtemp()); s=LocalStorage(t/'media'); f=t/'v.mp4'; f.write_bytes(b'x'*10); print(s.put_file(f,'sources/abc/source.mp4'), s.local_path('sources/abc/source.mp4').exists())" 2>&1 | Out-String
           "storage: $store"
           if ($store.Trim() -ne "10 True") { $problems += "media storage refuses Windows paths: $store" }
+
+          # A real render with the FFmpeg the app ships (source -> mezzanine -> 9:16 clip with captions).
+          $ErrorActionPreference = "Continue"   # the face tracker logs to stderr; only the exit code counts
+          $render = & $py (Join-Path $env:GITHUB_WORKSPACE "repo\installer\windows\tests\render_check.py") 2>&1 | Out-String
+          $renderCode = $LASTEXITCODE
+          $ErrorActionPreference = "Stop"
+          ($render -split "`n" | Where-Object { $_ -match "^(ffmpeg|render|mezzanine|Traceback|  File|\S+Error)" }) | ForEach-Object { Write-Host $_ }
+          if ($renderCode -ne 0) { $problems += "rendering a clip failed (see above)" }
 
           # 3. Stop and start again with the launcher (what the shortcuts do).
           if ((Launcher "stop") -ne 0) { $problems += "the launcher couldn't stop CLIPFORGE" }

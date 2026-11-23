@@ -182,7 +182,8 @@ def bridge(video: Path, out: Path, bridge_s: float, duration_s: float, *, has_au
     maps = ["-map", "[vout]"]
     if has_audio:
         graph += (f";[0:a]asplit[am][ah];[ah]atrim=0:{b:.3f},asetpts=PTS-STARTPTS[ahh];"
-                  f"[am]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS[amm];[amm][ahh]acrossfade=d={b:.3f}[aout]")
+                  f"[am]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS[amm];[amm][ahh]acrossfade=d={b:.3f},"
+                  f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[aout]")
         maps += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
     args += [graph, *maps, "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
              "-movflags", "+faststart", str(out)]
