@@ -78,8 +78,9 @@ class JobContext:
 
     # ------------------------------------------------------------ reporting
     def progress(self, fraction: float | None = None, *, label: str | None = None, stage: str | None = None,
-                 message: str | None = None, data: dict | None = None) -> None:
-        queue.set_progress(self.job_id, progress=fraction, label=label, stage=stage, message=message, data=data)
+                 message: str | None = None, data: dict | None = None, detail: dict | None = None) -> None:
+        queue.set_progress(self.job_id, progress=fraction, label=label, stage=stage, message=message, data=data,
+                           detail=detail)
 
     def event(self, message: str, *, stage: str | None = None, data: dict | None = None) -> None:
         queue.set_progress(self.job_id, message=message, stage=stage, data=data)

@@ -4,7 +4,7 @@ import importlib
 import importlib.util
 
 MODULES = ("media_jobs", "video_workflow", "publish_jobs", "analytics_jobs", "maintenance_jobs", "live_jobs",
-           "memory_jobs", "batch_jobs")
+           "memory_jobs", "batch_jobs", "ai_jobs")
 
 for _name in MODULES:
     _full = f"{__name__}.{_name}"

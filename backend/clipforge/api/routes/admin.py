@@ -64,7 +64,7 @@ def list_backups(_: Principal = Depends(admin)) -> list[dict]:
     for path in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
         manifest = path / "manifest.json"
         if manifest.exists():
-            out.append({"name": path.name, **json.loads(manifest.read_text())})
+            out.append({"name": path.name, **json.loads(manifest.read_text(encoding="utf-8"))})
     return out
 
 

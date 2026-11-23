@@ -121,19 +121,16 @@ def cmd_download_models(args: argparse.Namespace) -> int:
     from .media import models
 
     failed = 0
-    if args.faster_whisper:
-        from .config import get_settings
-
-        settings = get_settings()
-        target = settings.models_dir / "faster-whisper" / settings.faster_whisper_model
+    whisper_ok = False
+    if args.faster_whisper or args.speech:
         try:
-            from faster_whisper import download_model
-
-            download_model(settings.faster_whisper_model, output_dir=str(target))
-            print(f"ok    {'faster-whisper':16} {target}")
-        except Exception as exc:  # noqa: BLE001 - network/hub errors are reported, not raised
-            failed += 1
-            print(f"FAIL  {'faster-whisper':16} {exc.__class__.__name__}: {str(exc)[:200]}", file=sys.stderr)
+            print(f"ok    {'faster-whisper':16} {models.install_faster_whisper()}", flush=True)
+            whisper_ok = True
+        except models.ModelUnavailable as exc:
+            failed += 0 if args.speech else 1  # --speech: Vosk is the fallback below
+            print(f"FAIL  {'faster-whisper':16} {exc}", file=sys.stderr, flush=True)
+    if args.speech and not whisper_ok and not args.vosk:
+        args.vosk = True  # faster-whisper could not be downloaded: fall back to the Vosk model
     if args.vosk or args.vosk_from:
         try:
             print(f"ok    {'vosk':16} {models.install_vosk(args.vosk_from)} (verified)")
@@ -266,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--vosk-from", metavar="PATH", help="install the speech model from a local .zip or folder")
     p.add_argument("--faster-whisper", action="store_true",
                    help="also download the faster-whisper model (CLIPFORGE_FASTER_WHISPER_MODEL, from Hugging Face)")
+    p.add_argument("--speech", action="store_true",
+                   help="a speech model: faster-whisper (about 480 MB), or the Vosk model if that download fails")
     p.set_defaults(func=cmd_download_models)
     sub.add_parser("doctor", help="check that this installation is complete").set_defaults(func=cmd_doctor)
 

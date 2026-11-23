@@ -34,10 +34,31 @@ Type what you want in plain language. Examples:
 | `Hold off posting for now` / `resume publishing` | switches publishing off/on (processing continues) |
 | `Pause everything` / `resume everything` / `emergency stop` | automation controls (admins) |
 | `Give me a tip for Shorts titles` | answered by your AI connection and saved as knowledge |
+| `Make clip 2 5 seconds shorter` / `cut the first 3 seconds of clip 1` | changes the clip and renders it again |
+| `Use karaoke captions on all clips` / `remove the captions from clip 3` | new caption style (or none), re-rendered |
+| `Rename clip 1 to "Stop undercharging"` | new title on the clip and its unpublished posts |
+| `Clip 2 starts too slow, fix it` / `how can I improve these clips?` | the **assistant** (needs an AI model, see *Local AI*) decides the change, or explains each clip's weak points |
 
 Every reply shows **What I did** (the steps taken) and cards: a production card with live
 progress (*Checking access → Fetching source → Transcribing → Finding highlights → Rendering →
-Ready*), approval cards with checkboxes, suggestions you can apply as defaults, and links.
+Ready*), approval cards with checkboxes, suggestions you can apply as defaults, and links. Under
+the steps, the card shows the step running now with its own bar: while a video downloads, how much
+has arrived, the speed and the time left (*120 MB of 260 MB · 5.2 MB/s · 35 s left*); while clips
+render, how many are done.
+
+**Attaching a video from your computer:** the paperclip uploads it in pieces of 8 MB with a
+percentage (*45% · 820 MB of 1.8 GB*); the × cancels. A dropped connection resumes where it
+stopped. Uploads of several GB work, up to the limit in `CLIPFORGE_MAX_UPLOAD_MB` (4 GB by default).
+
+**The assistant.** Ask for changes to the clips of the project you're working on — shorter,
+longer, a later start, another caption style, a new title, render again — or for feedback on
+them. With an AI model connected (a free local one is enough, see *Local AI*), it reads your
+request together with each clip's scores, length, captions and quality checks, decides what to
+change and does it through the same steps as the buttons in My Videos; the reply says what it
+changed and *What I did* shows which model understood it. Without a model, specific requests
+(clip numbers, seconds, caption styles, quoted titles) still work, and *how can I improve…* lists
+each clip's weakest scores. Settings it suggests for future videos are shown as a card for you
+to apply. Viewers can ask; changing clips needs the editor role, pausing needs admin.
 
 If a link can't be fully accessed, the card says exactly why and offers the simplest
 alternatives (connect your account, add the original file, upload it, …). CLIPFORGE never
@@ -137,6 +158,23 @@ them, with a reminder about rights.
 
 Add OpenAI, Google Gemini, Anthropic, any OpenAI-compatible endpoint or a local Ollama server.
 Each connection is tested when added (it lists the models and asks for a one-word reply).
+
+### Local AI on this PC
+
+The card at the top of AI Connections sets up a free AI model that runs on your own computer, so
+Brain Chat can understand anything you ask and the assistant can improve your clips — no API key,
+no cost, nothing leaves the PC.
+
+1. **Get Ollama** (free, for Windows, macOS and Linux) and open it; it runs in the background.
+2. **Check again**: the card shows *Ollama is running* and its models.
+3. **Download** a model: *Qwen 2.5 3B* (1.9 GB, about 4 GB of memory) is recommended for most PCs;
+   *Qwen 2.5 7B* answers better but needs about 8 GB of free memory. The card shows the download's
+   progress (size, speed, time left); when it finishes the model is connected by itself.
+
+LM Studio, Jan and a llama.cpp server are found too (*Use it*). On the Windows app a running
+Ollama that already has a model is connected automatically the first time Brain Chat needs one.
+Docker installs: start the optional server with `docker compose --profile local-ai up -d`
+(`CLIPFORGE_OLLAMA_URL` points elsewhere if you run Ollama yourself).
 
 - **On/Off** per connection; **Test** re-checks it; **Advanced settings** per model: use it or
   not, its role (*Best quality*, *Balanced*, *Fast & cheap*), exact prices, measured speed and

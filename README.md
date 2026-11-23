@@ -24,6 +24,10 @@ Instagram accounts, then learns from the results.
 
 - **One chat, one Brain.** Plain-language requests, status, costs, memory and controls all go
   through Brain Chat. Everything the Brain does is shown as cards you can open, retry or approve.
+- **An assistant that edits your clips.** "Make clip 2 punchier", "cut the first 3 seconds",
+  "karaoke captions on all clips", "why is clip 1 weak?" — with a free **local AI** model on your
+  own PC (Ollama; set up in one card with download progress) the assistant reads each clip's scores
+  and quality checks, decides the change and re-renders. Specific edits work without any model.
 - **Links in, clips out.** YouTube long-form videos, YouTube livestreams, Instagram Reels and
   Instagram video posts. Public videos are downloaded with yt-dlp when your own copy isn't
   available (owner switch; never behind a login, paywall or DRM). Uploading files is an optional
@@ -61,12 +65,13 @@ Instagram accounts, then learns from the results.
 Run **ClipForge-Setup-&lt;version&gt;.exe** (a ready-built one is in [dist/windows](dist/windows/)).
 CLIPFORGE installs as an ordinary Windows app — no Docker, no Linux, no administrator rights, no
 sign-in — shows its progress, adds Start menu shortcuts and opens in your browser. See
-[docs/WINDOWS.md](docs/WINDOWS.md). The installer is built with `installer/windows/build.sh`.
+[docs/WINDOWS.md](docs/WINDOWS.md) (including *Local AI*). The installer is built with
+`installer/windows/build.sh`.
 
 ## Quick start (Docker)
 
 Requirements: a Linux server or VM with Docker Engine + Compose v2, 4 CPU cores, **16 GB RAM**
-(8 GB minimum: the bundled speech model keeps about 5.5 GB in memory in each media worker) and
+(8 GB minimum: the bundled speech model uses about 5.5 GB in a media worker while it transcribes) and
 30 GB free disk plus room for your videos. macOS/Windows with Docker Desktop work for testing.
 
 ```bash

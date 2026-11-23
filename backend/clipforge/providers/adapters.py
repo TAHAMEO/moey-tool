@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -23,10 +24,17 @@ from .base import (
 )
 
 
+def _direct(url: str) -> bool:
+    """A model server on this computer is reached directly, never through a proxy from the
+    environment (a corporate proxy cannot reach the PC's own 127.0.0.1)."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host in ("localhost", "::1") or host.startswith("127.")
+
+
 def _post(url: str, *, headers: dict[str, str], body: dict[str, Any], timeout: float) -> tuple[dict, int]:
     started = time.monotonic()
     try:
-        with httpx.Client(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(timeout, connect=10.0), trust_env=not _direct(url)) as client:
             response = client.post(url, headers=headers, json=body)
     except httpx.TimeoutException as exc:
         raise ProviderError("timeout", f"Request timed out after {timeout:.0f}s") from exc
@@ -43,7 +51,7 @@ def _post(url: str, *, headers: dict[str, str], body: dict[str, Any], timeout: f
 
 def _get(url: str, *, headers: dict[str, str], timeout: float = 20.0) -> dict:
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, trust_env=not _direct(url)) as client:
             response = client.get(url, headers=headers)
     except httpx.TimeoutException as exc:
         raise ProviderError("timeout", "Request timed out") from exc

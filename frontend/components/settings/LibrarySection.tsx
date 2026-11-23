@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Badge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Input, Label, Modal, ProgressBar, Select } from "@/components/ui";
-import { api, timeAgo, uploadWithProgress } from "@/lib/api";
+import { api, timeAgo, uploadInPieces } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { LibraryItem } from "@/lib/types";
@@ -31,16 +31,14 @@ export function LibrarySection() {
 
   async function upload() {
     if (!file) return;
-    const body = new FormData();
-    body.append("file", file);
-    body.append("kind", form.kind);
-    body.append("title", form.title);
-    body.append("license_note", form.license_note);
-    body.append("tags", form.tags);
-    body.append("rights_confirmed", String(form.rights));
     setProgress(0);
     try {
-      await uploadWithProgress("/library", body, setProgress);
+      // In pieces of a few MB: one big request is cut off at 10 MB by the Windows app's web server.
+      const uploadId = await uploadInPieces(file, "library", setProgress);
+      await api("/library/from-upload", {
+        body: { upload_id: uploadId, kind: form.kind, title: form.title, license_note: form.license_note, tags: form.tags,
+                rights_confirmed: form.rights },
+      });
       toast("success", "Added to your library.");
       setOpen(false);
       setFile(null);

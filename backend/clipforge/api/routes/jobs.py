@@ -60,7 +60,28 @@ def list_jobs(active: bool = False, project_id: uuid.UUID | None = None, limit: 
         query = query.where(Job.project_id == project_id)
     else:
         query = query.where(Job.parent_id.is_(None))
-    return [queue.job_summary(j) for j in db.execute(query).scalars()]
+    return [{**queue.job_summary(j), "step": current_step(db, j)} for j in db.execute(query).scalars()]
+
+
+def current_step(db: Session, job: Job) -> dict | None:
+    """What a waiting workflow is doing right now: the steps it waits for (downloading, preparing,
+    transcribing, rendering N clips…) with their combined progress and, while a video downloads,
+    its bytes, speed and time left."""
+    waiting = (job.checkpoint or {}).get("waiting") or {}
+    if job.status != "waiting" or waiting.get("type") != "children":
+        return None
+    children = db.execute(select(Job).where(Job.parent_id == job.id, Job.wait_group == waiting.get("wait_group"))
+                          .order_by(Job.created_at)).scalars().all()
+    if not children:
+        return None
+    done = [c for c in children if c.status in queue.TERMINAL]
+    running = [c for c in children if c.status == "running"]
+    progress = sum(1.0 if c.status in queue.TERMINAL else c.progress for c in children) / len(children)
+    lead = running[0] if running else next((c for c in children if c.status not in queue.TERMINAL), children[-1])
+    return {"label": lead.status_label if running else (waiting.get("label") or lead.status_label),
+            "progress": round(progress, 3), "done": len(done), "total": len(children),
+            "status": "running" if running else lead.status,
+            "detail": (lead.checkpoint or {}).get("detail") if lead.status == "running" else None}
 
 
 @router.get("/{job_id}")
@@ -70,6 +91,7 @@ def get_job(job_id: uuid.UUID, db: Session = Depends(get_db), _: Principal = Dep
     children = db.execute(select(Job).where(Job.parent_id == job_id).order_by(Job.created_at)).scalars()
     return {
         **queue.job_summary(job),
+        "step": current_step(db, job),
         "result": job.result,
         "events": [{"at": e.created_at, "level": e.level, "stage": e.stage, "message": e.message} for e in events],
         "children": [queue.job_summary(c) for c in children],

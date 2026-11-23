@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import type { JobLiveDetail, JobStep } from "@/lib/types";
 
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger" | "info";
 
@@ -24,7 +25,7 @@ export function toneForLabel(label: string, status?: string): Tone {
   if (/(failed|unavailable|denied|error|cancel)/.test(text)) return "danger";
   if (/(access required|waiting|approval|scheduled|paused|transcript only|reconnecting)/.test(text)) return "warning";
   if (/(completed|ready|published|done|ok|connected)/.test(text)) return "success";
-  if (/(queued|checking|fetching|transcrib|analyz|finding|editing|render|publishing|running|processing|receiving)/.test(text)) return "primary";
+  if (/(queued|checking|fetching|download|preparing|transcrib|analyz|finding|editing|render|publishing|running|processing|receiving)/.test(text)) return "primary";
   return "neutral";
 }
 
@@ -75,4 +76,52 @@ export function stepIndex(label: string): number {
     if (step.match.test(label)) index = i;
   });
   return index;
+}
+
+function bytes(value?: number | null): string {
+  if (!value) return "0 MB";
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function duration(seconds: number): string {
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ${Math.round(seconds % 60)} s`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+/** "120 MB of 260 MB · 5.2 MB/s · 35 s left · file 1 of 2" for a running download. */
+export function liveDetailText(detail?: JobLiveDetail | null): string | null {
+  if (!detail || detail.downloaded === undefined) return null;
+  const parts = [detail.total ? `${bytes(detail.downloaded)} of ${bytes(detail.total)}` : bytes(detail.downloaded)];
+  if (detail.speed) parts.push(`${bytes(detail.speed)}/s`);
+  if (detail.eta !== null && detail.eta !== undefined) parts.push(`${duration(detail.eta)} left`);
+  if (detail.parts && detail.parts > 1) parts.push(`${detail.part === 1 ? "video" : "audio"} (file ${detail.part} of ${detail.parts})`);
+  return parts.join(" · ");
+}
+
+/** The step a workflow is working on right now: its own bar, percent and live figures. */
+export function StepProgress({ step, className }: { step: JobStep; className?: string }) {
+  // A download with a known size: the bar follows the bytes; otherwise the step's own progress.
+  const bytesShare = step.total === 1 && step.detail?.total ? (step.detail.downloaded ?? 0) / step.detail.total : null;
+  const percent = Math.floor(Math.min(1, bytesShare ?? step.progress) * 100);
+  const live = liveDetailText(step.detail);
+  return (
+    <div className={clsx("rounded-xl bg-surface-2 px-3 py-2.5", className)} aria-live="polite">
+      <div className="mb-1.5 flex items-center justify-between gap-3 text-[12px]">
+        <span className="truncate font-medium text-text">
+          {step.label}
+          {step.total > 1 && <span className="font-normal text-muted"> · {step.done} of {step.total} done</span>}
+        </span>
+        <span className="shrink-0 tabular-nums text-muted">{step.status === "queued" ? "waiting for a free worker" : `${percent}%`}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/60" role="progressbar" aria-valuenow={percent}
+        aria-valuemin={0} aria-valuemax={100} aria-label={step.label}>
+        <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${Math.max(2, Math.min(100, percent))}%` }} />
+      </div>
+      {live && <p className="mt-1.5 text-[11px] tabular-nums text-muted">{live}</p>}
+    </div>
+  );
 }

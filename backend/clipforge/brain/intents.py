@@ -47,6 +47,35 @@ def folder_name(text: str) -> str | None:
     return None
 
 
+# --- references to existing clips -------------------------------------------
+_ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+             "ninth": 9, "tenth": 10}
+
+
+def clip_refs(text: str) -> list[int]:
+    """Clip numbers named in a request; [0] for every clip."""
+    lower = text.lower()
+    if re.search(r"\b(all|every|each)\s+(?:of\s+)?(?:the\s+|my\s+)?(clips?|shorts?|reels?|videos?)\b|\ball of them\b", lower):
+        return [0]
+    refs = [int(n) for n in re.findall(r"\b(?:clip|short|reel|video|#)\s*#?(\d{1,2})\b", lower)]
+    refs += [_ORDINALS[w] for w in re.findall(r"\b(" + "|".join(_ORDINALS) + r")\s+(?:clip|short|reel|one)\b", lower)]
+    if re.search(r"\b(last|final)\s+(?:clip|short|reel|one)\b", lower):
+        refs.append(-1)
+    return list(dict.fromkeys(refs))
+
+
+def wants_edit(text: str) -> bool:
+    """Does this message ask to change or judge existing clips (rather than make new ones)?"""
+    lower = text.lower()
+    signal = re.search(
+        r"\b(shorter|longer|trim|extend|re-?render|render (it|them|again)|rename|retitle|title|captions?|subtitles?"
+        r"|start (later|earlier)|end (later|earlier|sooner)|cut (the )?(first|last|opening|ending|beginning|end)"
+        r"|improve|better|feedback|review|weak(est)?|what('?s| is) wrong)\b", lower)
+    reference = clip_refs(text) or re.search(
+        r"\b(the|this|that|these|those|my)\s+(clips?|shorts?|reels?)\b|\b(it|them)\b", lower)
+    return bool(signal and reference)
+
+
 @dataclass
 class ParsedRequest:
     intent: str
@@ -153,7 +182,9 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
         return ParsedRequest("control", control_action="resume", **base)
 
     clipish = bool(re.search(r"\b(clip|short|reel|highlight|cut|edit|analy[sz]e|process|watch|make|create|turn|find|best|moments?|repurpose)", lower))
-    publish = bool(re.search(r"\b(publish|post|upload|share it|go live with|schedule)\b", lower)) and not re.search(r"\b(don'?t|do not|never|without)\s+(publish|post|upload)", lower)
+    # "this upload" / "the uploaded video" name the file sent, they don't ask to publish it.
+    verbs = re.sub(r"\b(this|the|that|my|an?|your)\s+(upload|uploaded( \w+)?)\b|\buploaded\b", " ", lower)
+    publish = bool(re.search(r"\b(publish|post|upload|share it|go live with|schedule)\b", verbs)) and not re.search(r"\b(don'?t|do not|never|without)\s+(publish|post|upload)", lower)
     low, high = _durations(text)
     focus = None
     if m := FOCUS_RE.search(text):
@@ -189,6 +220,10 @@ def parse(text: str, *, has_attachments: bool = False) -> ParsedRequest:
         return ParsedRequest("forget", **base)
     if re.search(r"^(please )?(remember|note|keep in mind)\b|\b(from now on|going forward|in (the )?future)\b|^(i prefer|i like|i want my|i don'?t like|always|never|my (brand|channel|audience|niche|style))\b", lower):
         return ParsedRequest("remember", **base)
+
+    # --- changing or judging existing clips ("make clip 2 shorter", "better title for clip 1") --
+    if wants_edit(text):
+        return ParsedRequest("edit", clip_refs=clip_refs(text), caption_style=caption_style, burn_captions=burn, **base)
 
     # --- publishing / approvals -----------------------------------------------
     refs = [int(n) for n in re.findall(r"\b(?:clip|short|reel|#)\s*(\d{1,2})\b", lower)]

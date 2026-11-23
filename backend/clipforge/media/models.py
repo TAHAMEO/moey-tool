@@ -8,6 +8,7 @@ later substitution is detected.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import threading
@@ -134,7 +135,7 @@ _VOSK_MAX_ZIP = 3 * 1024**3
 
 def _vosk_manifest() -> dict[str, str]:
     entries = {}
-    for line in VOSK_MANIFEST.read_text().splitlines():
+    for line in VOSK_MANIFEST.read_text(encoding="utf-8").splitlines():
         digest, _, name = line.partition("  ")
         if digest and name:
             entries[name] = digest
@@ -252,3 +253,79 @@ def install_vosk(source: str | None = None) -> Path:
         return final
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+# ---------------------------------------------------------- faster-whisper speech model
+#: Approximate download sizes (MB), used for progress when the hub does not report sizes.
+WHISPER_SIZES_MB = {"tiny": 75, "tiny.en": 75, "base": 145, "base.en": 145, "small": 484, "small.en": 484,
+                    "medium": 1530, "medium.en": 1530}
+
+
+def faster_whisper_dir(size: str | None = None) -> Path:
+    return get_settings().models_dir / "faster-whisper" / (size or get_settings().faster_whisper_model)
+
+
+def faster_whisper_installed(size: str | None = None) -> bool:
+    target = faster_whisper_dir(size)
+    return (target / "model.bin").is_file() and (target / "config.json").is_file()
+
+
+def install_faster_whisper(size: str | None = None, on_progress=None) -> Path:
+    """Download a faster-whisper (CTranslate2 Whisper) model from its publisher on Hugging Face.
+
+    It is fetched into a staging folder and moved into place only when complete, so an
+    interrupted download is never mistaken for a model. ``on_progress(done_bytes, total_bytes)``
+    is called about once a second while it downloads (``total_bytes`` may be 0 when unknown).
+    """
+    import shutil
+
+    size = size or get_settings().faster_whisper_model
+    target = faster_whisper_dir(size)
+    if faster_whisper_installed(size):
+        return target
+    try:
+        from faster_whisper import download_model
+    except ImportError as exc:
+        raise ModelUnavailable("faster-whisper is not installed") from exc
+    staging = target.with_name(target.name + ".download")
+    staging.mkdir(parents=True, exist_ok=True)
+    total = WHISPER_SIZES_MB.get(size, 0) << 20
+    progress = _Progress(f"Speech model ({size})", total)
+    stop = threading.Event()
+
+    def watch() -> None:
+        while not stop.wait(1.0):
+            done = 0
+            for path in staging.rglob("*"):
+                with contextlib.suppress(OSError):
+                    if path.is_file():
+                        done += path.stat().st_size
+            progress.update(done)
+            if on_progress is not None:
+                with contextlib.suppress(Exception):
+                    on_progress(done, total)
+
+    watcher = threading.Thread(target=watch, name="whisper-download-progress", daemon=True)
+    watcher.start()
+    log.info("Downloading the faster-whisper %s speech model (about %d MB)", size, total >> 20)
+    try:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # huggingface_hub: "local_dir_use_symlinks is deprecated"
+            download_model(size, output_dir=str(staging))
+    except Exception as exc:  # network or hub errors: reported; the partial files are kept to resume
+        raise ModelUnavailable(f"Could not download the faster-whisper {size} model: {exc}"[:400]) from exc
+    finally:
+        stop.set()
+        watcher.join(timeout=5)
+    if not ((staging / "model.bin").is_file() and (staging / "config.json").is_file()):
+        raise ModelUnavailable(f"The faster-whisper {size} download is incomplete")
+    shutil.rmtree(staging / ".cache", ignore_errors=True)
+    if target.exists():
+        shutil.rmtree(target)
+    staging.replace(target)
+    if on_progress is not None:
+        with contextlib.suppress(Exception):
+            on_progress(total, total)
+    return target

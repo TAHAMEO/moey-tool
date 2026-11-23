@@ -56,7 +56,7 @@ class ProbeResult:
 
 def probe(path: Path) -> ProbeResult:
     command = ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", *SAFE_INPUT, str(path)]
-    proc = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(command, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if proc.returncode != 0:
         raise MediaError("The file is not a readable video or audio file.", code="unreadable")
     data = json.loads(proc.stdout or "{}")
@@ -227,7 +227,7 @@ def sample_frames(video: Path, *, fps: float, width: int, start_s: float = 0.0, 
 def measure_loudness(path: Path) -> dict:
     """Integrated loudness / true peak via the ebur128 filter."""
     proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-map", "0:a:0?", "-af",
-                           "ebur128=peak=true", "-f", "null", "-"], check=False, capture_output=True, text=True, timeout=600)
+                           "ebur128=peak=true", "-f", "null", "-"], check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
     text = proc.stderr
     out: dict = {}
     summary = text[text.rfind("Summary:"):] if "Summary:" in text else ""
@@ -244,7 +244,7 @@ def measure_loudness(path: Path) -> dict:
 def detect_black_and_freeze(path: Path, duration_s: float) -> dict:
     proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vf",
                            "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2", "-an", "-f", "null", "-"],
-                          check=False, capture_output=True, text=True, timeout=900)
+                          check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
     black = sum(float(part.split("black_duration:")[1].split()[0]) for part in proc.stderr.splitlines() if "black_duration:" in part)
     freezes = sum(float(part.split("freeze_duration:")[1].split()[0]) for part in proc.stderr.splitlines() if "freeze_duration:" in part)
     return {"black_s": round(black, 2), "frozen_s": round(freezes, 2),
@@ -257,7 +257,7 @@ def capabilities() -> dict:
     path = shutil.which("ffmpeg")
     if not path:
         return {"available": False}
-    out = subprocess.run([path, "-hide_banner", "-version"], check=False, capture_output=True, text=True, timeout=10).stdout
+    out = subprocess.run([path, "-hide_banner", "-version"], check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10).stdout
     first = out.splitlines()[0] if out else ""
     return {
         "available": True,

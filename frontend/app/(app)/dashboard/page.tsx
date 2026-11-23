@@ -4,7 +4,7 @@ import { Activity, CalendarClock, CheckCircle2, Circle, Clapperboard, DollarSign
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { formatWhen } from "@/components/schedule";
-import { Badge, StatusBadge } from "@/components/status";
+import { Badge, StatusBadge, StepProgress } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Modal, PageHeader, ProgressBar, SectionHeader, Skeleton, Stat } from "@/components/ui";
 import { api, money, platformName, timeAgo } from "@/lib/api";
@@ -14,7 +14,7 @@ import type { JobSummary, ProjectSummary, ScheduleItem } from "@/lib/types";
 
 const JOB_NAMES: Record<string, string> = {
   "workflow.video": "Video production", "workflow.publish": "Publishing", "batch.ingest_file": "Taking in a video from a watched folder",
-  "media.render": "Re-rendering a clip", "live.process": "Live stream",
+  "media.render": "Re-rendering a clip", "ai.pull_model": "Downloading an AI model", "live.process": "Live stream",
 };
 
 type Usage = { today_usd: number; month_usd: number; budgets: { daily: number; monthly: number }; cache_hits_month: number };
@@ -164,12 +164,13 @@ export default function DashboardPage() {
                     <Link href={job.project_id ? `/videos/${job.project_id}` : "#"} className="truncate text-sm font-medium hover:text-primary">
                       {JOB_NAMES[job.type] ?? "Background task"}
                     </Link>
-                    <StatusBadge label={job.label} status={job.status} />
+                    <StatusBadge label={job.label} status={job.step ? "running" : job.status} />
                   </div>
                   <div className="mt-2 flex items-center gap-3">
                     <ProgressBar value={job.progress} />
                     <span className="w-16 shrink-0 text-right text-[12px] text-faint">{timeAgo(job.created_at)}</span>
                   </div>
+                  {job.step && <StepProgress step={job.step} className="mt-2" />}
                 </li>
               ))}
             </ul>

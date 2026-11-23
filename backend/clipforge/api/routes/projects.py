@@ -149,25 +149,17 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
 @router.patch("/clips/{clip_id}")
 def edit_clip(clip_id: uuid.UUID, body: ClipEdit, request: Request, db: Session = Depends(get_db),
               principal: Principal = Depends(editor)) -> dict:
+    from ...services import clip_edits
+
     clip = db.get(Clip, clip_id)
     if clip is None:
         raise HTTPException(404, {"code": "not_found", "message": "Clip not found."})
-    if body.start_s is not None:
-        clip.start_s = body.start_s
-    if body.end_s is not None:
-        clip.end_s = body.end_s
-    if clip.end_s - clip.start_s < 2:
-        raise HTTPException(400, {"code": "range", "message": "A clip must be at least 2 seconds long."})
-    if body.title is not None:
-        clip.title = body.title
-    job = None
-    if body.rerender and (body.start_s is not None or body.end_s is not None or body.caption_style or body.burn_captions is not None):
-        for render in db.execute(select(Render).where(Render.clip_id == clip.id)).scalars():
-            render.status = "superseded"
-        options = {k: v for k, v in {"caption_style": body.caption_style, "burn_captions": body.burn_captions}.items() if v is not None}
-        job = queue.enqueue(db, "media.render", {"clip_id": str(clip.id), "options": options}, queue="media",
-                            project_id=clip.project_id, user_id=principal.id, status_label="Rendering")
-        clip.status = "selected"
+    try:
+        job = clip_edits.edit_clip(db, clip, start_s=body.start_s, end_s=body.end_s, title=body.title,
+                                   caption_style=body.caption_style, burn_captions=body.burn_captions,
+                                   rerender=body.rerender, user_id=principal.id)
+    except clip_edits.EditError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     audit(db, "clip.edit", user_id=principal.id, target_type="clip", target_id=clip_id,
           details=body.model_dump(exclude_none=True), ip=client_ip(request))
     return {"ok": True, "render_job_id": str(job.id) if job else None}

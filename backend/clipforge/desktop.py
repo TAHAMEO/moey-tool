@@ -17,7 +17,7 @@ Commands (the Windows launcher and setup use them; they also work on Linux and m
     clipforge desktop run     start everything and keep it running until `stop`
     clipforge desktop stop    stop everything
     clipforge desktop status  what is running
-    clipforge desktop models  download the AI models (--vosk adds the 1.8 GB speech model)
+    clipforge desktop models  download the AI models (--speech adds a speech model)
 """
 
 from __future__ import annotations
@@ -477,12 +477,15 @@ def cmd_status(layout: Layout) -> int:
     return 0 if ready(config) else 3
 
 
-def cmd_models(layout: Layout, vosk: bool) -> int:
+def cmd_models(layout: Layout, vosk: bool, speech: bool = False) -> int:
     config = ensure_config(layout)
     env = environment(layout, config)
     code = subprocess.run(_cli("download-models"), env=env, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, check=False).returncode
-    if vosk and code == 0:
-        code = subprocess.run(_cli("download-models", "--vosk"), env=env, stdin=subprocess.DEVNULL,
+    if (vosk or speech) and code == 0:
+        # --speech: faster-whisper (about 480 MB, about 1 GB of memory while it works), or the
+        # 1.8 GB Vosk model when that download fails.
+        extra = (["--speech"] if speech else []) + (["--vosk"] if vosk else [])
+        code = subprocess.run(_cli("download-models", *extra, "--strict"), env=env, stdin=subprocess.DEVNULL,
                               creationflags=NO_WINDOW, check=False).returncode
     return code
 
@@ -491,7 +494,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="clipforge desktop")
     parser.add_argument("action", choices=["init", "run", "stop", "status", "models"])
     parser.add_argument("--root", required=True, type=Path, help="the installation folder")
-    parser.add_argument("--vosk", action="store_true", help="models: also the 1.8 GB speech model")
+    parser.add_argument("--vosk", action="store_true", help="models: also the 1.8 GB Vosk speech model")
+    parser.add_argument("--speech", action="store_true",
+                        help="models: a speech model (faster-whisper, or Vosk if that download fails)")
     parser.add_argument("--idle-exit", type=float, default=None, help=argparse.SUPPRESS)  # tests
     args = parser.parse_args(argv)
     layout = Layout(args.root.resolve())
@@ -503,4 +508,4 @@ def main(argv: list[str]) -> int:
         return cmd_stop(layout)
     if args.action == "status":
         return cmd_status(layout)
-    return cmd_models(layout, args.vosk)
+    return cmd_models(layout, args.vosk, args.speech)

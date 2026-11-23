@@ -16,7 +16,7 @@
     previous   stop a running CLIPFORGE (and the older Linux-based version, if there is one)
     runtime    download Python and CLIPFORGE's components (about 1.2 GB)
     setup      create CLIPFORGE's settings and database
-    models     download the AI models (the 1.8 GB speech model too, with progress)
+    models     download the AI models (the speech model too, about 480 MB, with progress)
     start      start CLIPFORGE and wait until it answers
 
   By hand:  powershell -ExecutionPolicy Bypass -File install.ps1 -Step all -InstallDir <folder>
@@ -336,12 +336,12 @@ function Step-Setup {
 
 function Step-Models {
   $arguments = @("models")
-  if ($env:CLIPFORGE_SKIP_SPEECH_MODEL -ne "1") { $arguments += "--vosk" }  # skipped only by the automated tests
-  Say "Downloading the AI models (the speech model is 1.8 GB; progress below)"
+  if ($env:CLIPFORGE_SKIP_SPEECH_MODEL -ne "1") { $arguments += "--speech" }  # skipped only by the automated tests
+  Say "Downloading the AI models (the speech model is about 480 MB; progress below)"
   $code = Invoke-ClipForge $arguments
   if ($code -ne 0) {
-    Say "   The models could not all be downloaded right now. CLIPFORGE works without them except for speech recognition;"
-    Say "   run setup again later to finish. (exit code $code)"
+    Say "   The models could not all be downloaded right now. CLIPFORGE still works: it downloads the speech model"
+    Say "   the first time a video needs it (or run setup again later). (exit code $code)"
   }
 }
 

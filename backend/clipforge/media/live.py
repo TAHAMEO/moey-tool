@@ -92,7 +92,22 @@ class LiveIngest:
                 str(self.dir / SEGMENT_PATTERN)]
         # stderr goes to a per-spawn log file: an unread pipe could fill up and block FFmpeg.
         self._log = open(self.dir / f"listener_{start_number:06d}.log", "ab")  # noqa: SIM115 - closed when the listener exits
+        if os.name == "nt":  # its own process group, no console window
+            return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self._log,
+                                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000)
         return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self._log, start_new_session=True)
+
+    def _terminate(self) -> None:
+        """Stop the listener (os.killpg exists on Linux and macOS only)."""
+        try:
+            if os.name == "nt":
+                self.proc.terminate()
+            else:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            self.proc.wait(timeout=10)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            self.proc.kill()
+            self.proc.wait(timeout=10)
 
     def _segment_files(self) -> list[tuple[int, Path]]:
         out = []
@@ -156,8 +171,7 @@ class LiveIngest:
                     break
                 report(files[:-1])  # a segment is complete once a newer one exists
             if self.proc.poll() is None:
-                os.killpg(self.proc.pid, signal.SIGTERM)
-                self.proc.wait(timeout=10)
+                self._terminate()
             self._log.close()
             for idx, path in self._segment_files():
                 if idx >= next_index and _size(path) == 0:
@@ -178,7 +192,7 @@ class LiveIngest:
                 quick_failures += 1
                 if quick_failures >= 5:
                     logs = sorted(self.dir.glob("listener_*.log"))
-                    error = logs[-1].read_text(errors="ignore")[-400:] if logs else ""
+                    error = logs[-1].read_text(encoding="utf-8", errors="ignore")[-400:] if logs else ""
                     raise RuntimeError(f"Live listener keeps failing to start: {error}")
                 time.sleep(1.0)
         return next_index
@@ -216,7 +230,7 @@ def build_replay(segments: list[Path], dest: Path) -> Path:
     """Concatenate retained segments (names we generated) into one MP4."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     listing = dest.with_suffix(".txt")
-    listing.write_text("".join(f"file '{p.resolve()}'\n" for p in segments))
+    listing.write_text("".join(f"file '{p.resolve()}'\n" for p in segments), encoding="utf-8")
     ffmpeg_tools.run(["-f", "concat", "-safe", "0", "-protocol_whitelist", "file,pipe", "-i", str(listing),
                       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
                       "-movflags", "+faststart", str(dest)])

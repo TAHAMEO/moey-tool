@@ -28,6 +28,7 @@ os.environ.setdefault("CLIPFORGE_MASTER_KEY", base64.urlsafe_b64encode(secrets.t
 os.environ.setdefault("CLIPFORGE_SSRF_PRIVATE_ALLOWLIST", "127.0.0.1,localhost")
 os.environ.setdefault("CLIPFORGE_LOG_LEVEL", "WARNING")
 os.environ["MEM0_TELEMETRY"] = "False"
+os.environ.setdefault("CLIPFORGE_LOCAL_AI_AUTOCONNECT", "false")  # never pick up an Ollama running on the test machine
 
 # Shared real model files (downloaded once into the dev data dir) are reused.
 _DEV_MODELS = Path(__file__).resolve().parents[2] / "var" / "models"

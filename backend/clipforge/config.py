@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     vosk_model_path: Path | None = None
     whisperx_python: Path | None = None  # interpreter of the isolated WhisperX venv
     faster_whisper_model: str = "small"
+    #: With no speech model installed, download the faster-whisper model the first time a video
+    #: needs one (about 480 MB, from its publisher on Hugging Face) instead of failing.
+    auto_download_speech_model: bool = True
+    #: The local Ollama server (local AI for Brain Chat; see providers/local_ai.py).
+    ollama_url: str = "http://127.0.0.1:11434"
+    #: Connect a running Ollama by itself when Brain Chat needs a model and none is connected.
+    local_ai_autoconnect: bool = True
     live_srt_port: int = 9000
     live_srt_port_count: int = 4
     live_bind_host: str = "0.0.0.0"
@@ -230,7 +237,7 @@ def _dev_master_key(data_dir: Path) -> bytes:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(base64.urlsafe_b64encode(key))
-    return _decode_key(path.read_text().strip())
+    return _decode_key(path.read_text(encoding="utf-8").strip())
 
 
 def generate_master_key() -> str:

@@ -33,6 +33,10 @@ const nextConfig: NextConfig = {
     // Only used when this server proxies /api itself (development, or no Caddy in front):
     // multi-GB uploads take longer than the 30 s default.
     proxyTimeout: 60 * 60 * 1000,
+    // A forwarded request body is held in memory and cut off at this size (10 MB by default), so
+    // videos are uploaded in pieces of 8 MB (lib/api.ts: uploadInPieces). This leaves room for
+    // those pieces and for small forms such as CSV imports.
+    proxyClientMaxBodySize: "32mb",
   },
   async rewrites() {
     // Same-origin API: the session cookie never has to cross origins.
