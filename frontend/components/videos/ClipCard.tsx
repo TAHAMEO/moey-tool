@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Badge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, Input, Label, Select } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, platformName } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Clip } from "@/lib/types";
 import { PackageEditor } from "./PackageEditor";
@@ -168,7 +168,9 @@ function ShortsStatus({ clip }: { clip: Clip }) {
   const loop = clip.shorts?.loop;
   const gate = clip.shorts?.publish_gate_result;
   const rehook = clip.shorts?.retention_plan;
-  if (!hook && !loop && !gate && !rehook) return null;
+  const orig = Object.entries(clip.shorts?.originality_flags ?? {});
+  const stats = Object.entries(clip.shorts?.analytics ?? {});
+  if (!hook && !loop && !gate && !rehook && !orig.length && !stats.length) return null;
   const pct = (v?: number | null) => (v == null ? "–" : Math.round(v * 100));
   return (
     <div className="mt-4 space-y-2 rounded-xl border border-border p-3 text-[12px]">
@@ -189,6 +191,18 @@ function ShortsStatus({ clip }: { clip: Clip }) {
         </ul>
       )}
       {rehook?.skipped && <p className="text-faint">Re-hook skipped: {rehook.skipped}</p>}
+      {orig.map(([platform, o]) => (o.flagged || o.switched_to) ? (
+        <p key={`o-${platform}`} className={o.flagged ? "text-warning" : "text-muted"}>
+          {platformName(platform)} originality: {o.reasons.join("; ")} (compared with {o.compared} recent posts)
+        </p>
+      ) : null)}
+      {stats.map(([platform, a]) => (
+        <div key={`a-${platform}`} className="text-muted">
+          <span className="text-text">{platformName(platform)}:</span>{" "}
+          {Object.entries(a.signals).map(([k, v]) => `${k === "average_percentage_viewed" ? Math.round(v) + "%" : Math.round(v * 100) + "%"} ${k.replace(/_/g, " ")}`).join(" · ") || "no retention numbers yet"}
+          {a.flags.length > 0 && <div className="text-warning">{a.flags.join("; ")}{a.suggestion ? ` — ${a.suggestion}` : ""}</div>}
+        </div>
+      ))}
       {(gate?.result === "held" || hook?.status === "held") && (
         <ul className="list-disc space-y-0.5 pl-4 text-warning">
           {[...new Set([...(gate?.reasons ?? []), ...(hook?.after.reasons ?? [])])].map((r) => <li key={r}>{r}</li>)}

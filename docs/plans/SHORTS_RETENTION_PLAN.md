@@ -1,8 +1,10 @@
 # Shorts retention upgrade — plan
 
-Status: **P0 and P1 implemented** — `clipforge/shorts/`, switches in Settings → Clips & editing
-(all off until turned on). P0: hook scorer + reconstruction, loop seam, review hold. P1: re-hook at
-20–25 s, kinetic captions, clip transcript export, packaging variants. P2–P3 not started.
+Status: **P0, P1 and P2 implemented** — `clipforge/shorts/`, `clipforge/analytics/retention.py`,
+switches in Settings → Clips & editing (all off until turned on). P0: hook scorer + reconstruction,
+loop seam, review hold. P1: re-hook at 20–25 s, kinetic captions, clip transcript export, packaging
+variants. P2: originality guardrail, early-retention feedback (YouTube retention report + engaged
+views, CSV/manual import, flop flags, style ranking, learned title ranking). P3 not started.
 
 Owner's decisions (2026-11-22): weak-hook clips are **held for review** (manual publish still
 possible); **no sentence re-ordering** unless "Open on the question" is switched on; **local AI
@@ -49,6 +51,34 @@ What P1 does (and what was found building it):
   ranking can't know a word was misheard, so the options list matters; channel talk inside a clip
   was leaking into keywords, highlights and hashtags (now filtered); the first keyword picker chose
   "raising" over "price" (now counts word forms together and uses "let's talk about …").
+
+What P2 does:
+- **Originality guardrail** (`shorts/originality.py`, in `publish_gate_node`): each clip's
+  fingerprint = opening type (question / warning / how-to / story / number / curiosity /
+  statement), structure (opening fix, question first, re-hook kind, loop, length band, frame-one
+  text), caption style, title shape (template, label prefix, opener, question/statement) and title
+  words. Two checks against the last 10 published clips on that platform (plus clips going out in
+  the same run): **near duplicate** — weighted similarity ≥ 0.85 (the template alone is 0.75, so it
+  also needs largely the same words); **template streak** — the same template as each of the last
+  5. A flagged clip first gets its other title options tried; if one passes, it is used ("switched
+  to title option #2"). Otherwise the clip is **held for review** — never published automatically.
+  Result in `clip.shorts.originality_flags[platform]` and the gate reasons.
+- **Early retention** (`analytics/retention.py`): YouTube collection adds `engagedViews` and the
+  audience-retention report (`dimensions=elapsedVideoTimeRatio`, `audienceWatchRatio`,
+  `relativeRetentionPerformance`) → `first_3s_retention`, `end_retention`, `replay_ratio` (> 1 =
+  replays). Each is asked separately, so an unsupported report never loses the others. **"Viewed vs.
+  swiped away" is YouTube Studio only** (not in the API — checked against the YouTube Analytics
+  metrics reference) and is recorded as unavailable with that reason; it comes in through **CSV
+  import** (Studio export columns such as "Stayed to watch (%)", matched by video id or exact
+  title; unknown rows are reported back, never guessed) or **manual entry**. Instagram: average watch
+  time → share watched. Each published clip gets `clip.shorts.analytics[platform]` (signals, flop
+  flags, a suggestion — re-edit the opening / tighten / consider deleting — and what's missing).
+  Styles (opening type, title template, frame-one text, re-hook kind, opening fix) are ranked by
+  retention relative to the channel's own posts (z-score per platform and metric; 3+ posts before a
+  style counts); the strongest source segments are listed. With "Rank title options by what kept
+  viewers" on, P1's title ranking gets at most ±0.1 from that.
+- Limits: the YouTube Analytics API usually has no data for 24–72 h, so the true "first hour" signal
+  is views from the Data API plus whatever you import; nothing is deleted or re-edited automatically.
 
 ## 1. The pipeline today (from the code)
 
@@ -205,7 +235,9 @@ and per published Short (the Model Hub already meters every paid call per job).
   "rehook_zoom": true, "rehook_text": true, "rehook_framing": true,
   "kinetic_captions": true, "seo_transcript": true,
   "packaging_variants": true, "title_min_chars": 30, "title_max_chars": 50, "first_frame_words": 2,
-  "originality": { "enabled": false, "compare_last": 10, "max_similarity": 0.8 }
+  "originality_gate": true, "originality_threshold": 0.85, "originality_compare_last": 10, "originality_streak": 5,
+  "retention_loop": true, "flop_viewed_rate": 0.55, "flop_first_3s_retention": 0.6, "flop_avg_viewed_pct": 40,
+  "learn_from_retention": true
 }
 ```
 

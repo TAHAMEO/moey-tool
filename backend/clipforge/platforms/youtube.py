@@ -51,6 +51,23 @@ def _get(auth: Auth, path: str, params: dict[str, Any]) -> dict:
     return response.json()
 
 
+def retention_curve(auth: Auth, video_id: str, start_date: str, end_date: str) -> list[tuple[float, float, float | None]]:
+    """The audience-retention report for one video: (elapsed share of the video 0-1, audience watch
+    ratio, relative retention performance) — 100 points. A watch ratio above 1 means parts were
+    watched more than once (replays/loops)."""
+    report = analytics_report(auth, video_id, start_date, end_date,
+                              ["audienceWatchRatio", "relativeRetentionPerformance"], dimensions="elapsedVideoTimeRatio")
+    names = [h["name"] for h in report.get("columnHeaders", [])]
+    out = []
+    for row in report.get("rows") or []:
+        data = dict(zip(names, row, strict=False))
+        if isinstance(data.get("elapsedVideoTimeRatio"), (int, float)) and isinstance(data.get("audienceWatchRatio"), (int, float)):
+            rel = data.get("relativeRetentionPerformance")
+            out.append((float(data["elapsedVideoTimeRatio"]), float(data["audienceWatchRatio"]),
+                        float(rel) if isinstance(rel, (int, float)) else None))
+    return sorted(out)
+
+
 # ------------------------------------------------------------------ reading
 def video(auth: Auth, video_id: str) -> dict | None:
     data = _get(auth, "videos", {"part": "snippet,contentDetails,status,liveStreamingDetails,statistics", "id": video_id})
@@ -273,10 +290,11 @@ def statistics(auth: Auth, video_ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def analytics_report(auth: Auth, video_id: str, start_date: str, end_date: str, metrics: list[str]) -> dict:
+def analytics_report(auth: Auth, video_id: str, start_date: str, end_date: str, metrics: list[str], *,
+                     dimensions: str = "video") -> dict:
     response = request("youtube", "GET", f"{get_settings().youtube_analytics_base.rstrip('/')}/reports", headers=auth.headers(), params={
         "ids": "channel==MINE", "startDate": start_date, "endDate": end_date, "metrics": ",".join(metrics),
-        "dimensions": "video", "filters": f"video=={video_id}",
+        "dimensions": dimensions, "filters": f"video=={video_id}",
     })
     if response.status_code != 200:
         raise google_error(response)

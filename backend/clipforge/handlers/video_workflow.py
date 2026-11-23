@@ -294,6 +294,11 @@ def package_node(state: VideoState, config) -> VideoState:
         platforms = project.request.get("platforms") or publishing.platforms
         owned = bool((source.access_detail or {}).get("owned")) or source.platform in ("upload", "gdrive")
         clips = db.execute(select(Clip).where(Clip.project_id == project.id).order_by(Clip.rank)).scalars().all()
+        boost = None
+        if shorts_cfg.packaging_variants and shorts_cfg.retention_loop and shorts_cfg.learn_from_retention:
+            from ..analytics import retention
+
+            boost = retention.template_boost(db, shorts_cfg)  # what kept viewers before (3+ posts per title style)
         for clip in clips:
             renders = {r.aspect: r for r in db.execute(select(Render).where(Render.clip_id == clip.id, Render.status == "done")).scalars()}
             vertical = renders.get("9:16") or next(iter(renders.values()), None)
@@ -303,8 +308,8 @@ def package_node(state: VideoState, config) -> VideoState:
                                      source_title=(source.source_metadata or {}).get("title"),
                                      source_url=source.normalized_url, owned_source=owned, llm_title=clip.title or None,
                                      job_id=ctx.job_id, project_id=project.id, allow_llm=True)  # hub enforces paid-API policy/budgets
-            variants = _packaging_variants(clip, copy, shorts_cfg, brand.channel_name,
-                                           credit=_credit(source, owned)) if shorts_cfg.packaging_variants else []
+            variants = _packaging_variants(clip, copy, shorts_cfg, brand.channel_name, credit=_credit(source, owned),
+                                           boost=boost) if shorts_cfg.packaging_variants else []
             if not clip.title:
                 clip.title = variants[0].title if variants else copy.youtube_title.replace(" #shorts", "")
             yt_thumb = db.execute(select(MediaAsset).where(MediaAsset.project_id == project.id, MediaAsset.kind == "thumbnail",
@@ -353,14 +358,14 @@ def _credit(source, owned: bool) -> str:
     return f"\n\nSource: {(source.source_metadata or {}).get('title') or 'original video'} — {source.normalized_url}"
 
 
-def _packaging_variants(clip, copy, cfg, channel: str, *, credit: str) -> list:
+def _packaging_variants(clip, copy, cfg, channel: str, *, credit: str, boost: dict | None = None) -> list:
     """2-3 ranked title / first-frame variants for a clip (stored on the clip); the best is used."""
     from ..shorts import packaging as spack
 
     pcfg = spack.PackagingConfig(title_min=cfg.title_min_chars, title_max=cfg.title_max_chars,
                                  first_frame_words=cfg.first_frame_words)
     shorts = dict(clip.shorts or {})
-    variants = spack.build(clip.transcript_text or "", llm_title=copy.youtube_title, channel=channel, cfg=pcfg,
+    variants = spack.build(clip.transcript_text or "", llm_title=copy.youtube_title, channel=channel, cfg=pcfg, boost=boost,
                            first_frames=shorts.get("first_frame_texts"),
                            burned=shorts.get("first_frame_text"))
     for v in variants:
@@ -444,21 +449,24 @@ def publish_gate_node(state: VideoState, config) -> VideoState:
     with session_scope() as db:
         hook_gate = app_settings.get_section(db, "shorts").hook_gate
     hook_held = [p for p in packages if hook_gate and p.get("hook_held")]
-    blocked = [p for p in packages if not p["qc_passed"] or p["review_words"] or third_party or p in hook_held]
+    # Repeating the channel's recent template: try the clip's other title options, else hold.
+    repeats = _originality(packages)
+    blocked = [p for p in packages if not p["qc_passed"] or p["review_words"] or third_party or p in hook_held
+               or p["package_id"] in repeats]
     if auto and not blocked:
         approved, notes = _requested_schedule(state, packages, [p["package_id"] for p in packages], config)
         why = "Batch set to post automatically" if project.request.get("auto_publish") else "Auto-publish policy"
         _record_gate(packages, "approved", [why])
         return {"approved": approved, "notes": [f"{why}: approved automatically", *notes]}
     _record_gate(packages, "awaiting_approval", ["waiting for your approval"], held=blocked, third_party=third_party,
-                 hook_held=hook_held)
+                 hook_held=hook_held, repeats=repeats)
     _set_project(state["project_id"], status="awaiting_approval", label="Waiting for your approval")
     decision = await_approval({"packages": packages, "project_id": state["project_id"],
                                "schedule": _schedule_hint(state["project_id"]),
                                # Clips cut from someone else's downloaded video are never published automatically.
                                "rights": "third_party_download" if third_party else None,
-                               "flags": [{"package_id": p["package_id"], "reason": _flag_reason(p, third_party, hook_held)}
-                                         for p in blocked]})
+                               "flags": [{"package_id": p["package_id"],
+                                          "reason": _flag_reason(p, third_party, hook_held, repeats)} for p in blocked]})
     approved = [pid for pid in (decision or {}).get("approved", []) if any(p["package_id"] == pid for p in packages)]
     _record_gate([p for p in packages if p["package_id"] in approved], "approved", ["approved by you"])
     _record_gate([p for p in packages if p["package_id"] not in approved], "not_approved", ["not approved"])
@@ -468,10 +476,12 @@ def publish_gate_node(state: VideoState, config) -> VideoState:
     return {"approved": approved, "notes": notes}
 
 
-def _flag_reason(package: dict, third_party: bool, hook_held: list[dict]) -> str:
+def _flag_reason(package: dict, third_party: bool, hook_held: list[dict], repeats: dict | None = None) -> str:
     if package in hook_held:
         why = "; ".join(package.get("hook_reasons") or []) or "the opening is weak"
         return f"weak first 3 seconds (hook {package.get('hook_score') or 0:.2f}): {why}"
+    if repeats and package["package_id"] in repeats:
+        return "repeats your recent posts: " + "; ".join(repeats[package["package_id"]])
     if package["review_words"]:
         return "caption words need review"
     if not package["qc_passed"]:
@@ -480,7 +490,7 @@ def _flag_reason(package: dict, third_party: bool, hook_held: list[dict]) -> str
 
 
 def _record_gate(packages: list[dict], result: str, reasons: list[str], *, held: list[dict] | None = None,
-                 third_party: bool = False, hook_held: list[dict] | None = None) -> None:
+                 third_party: bool = False, hook_held: list[dict] | None = None, repeats: dict | None = None) -> None:
     """Store on each clip why it was published, held or left for approval (status output)."""
     held = held or []
     by_clip: dict[str, dict] = {}
@@ -495,7 +505,7 @@ def _record_gate(packages: list[dict], result: str, reasons: list[str], *, held:
         entry = by_clip.setdefault(clip_id, {"result": result, "reasons": list(reasons), "at": utcnow().isoformat()})
         if p in held:
             entry["result"] = "held"
-            reason = _flag_reason(p, third_party, hook_held or [])
+            reason = _flag_reason(p, third_party, hook_held or [], repeats)
             if reason not in entry["reasons"]:
                 entry["reasons"].append(reason)
     with session_scope() as db:
@@ -503,6 +513,85 @@ def _record_gate(packages: list[dict], result: str, reasons: list[str], *, held:
             clip = db.get(Clip, uuid.UUID(clip_id))
             if clip is not None:
                 clip.shorts = {**(clip.shorts or {}), "publish_gate_result": entry}
+
+
+def _caption_and_length(render: Render | None, clip: Clip) -> tuple[str | None, float]:
+    decisions = (render.edit_decisions or {}) if render else {}
+    kept = decisions.get("kept_intervals")
+    duration = sum(b - a for a, b in kept) if kept else clip.end_s - clip.start_s
+    return decisions.get("caption_style"), duration
+
+
+def recent_fingerprints(db, platform: str, *, exclude_clip, limit: int) -> list:
+    """Fingerprints of the channel's last published clips on ``platform``, newest first."""
+    from ..db.models import Publication
+    from ..shorts import originality
+
+    rows = db.execute(select(Publication, OutputPackage, Clip, Render)
+                      .join(OutputPackage, OutputPackage.id == Publication.package_id)
+                      .join(Clip, Clip.id == OutputPackage.clip_id)
+                      .join(Render, Render.id == OutputPackage.render_id, isouter=True)
+                      .where(Publication.status == "published", Publication.platform == platform, Clip.id != exclude_clip)
+                      .order_by(Publication.published_at.desc()).limit(limit * 2)).all()
+    out, seen = [], set()
+    for pub, package, clip, render in rows:
+        if clip.id in seen:
+            continue
+        seen.add(clip.id)
+        style, duration = _caption_and_length(render, clip)
+        out.append(originality.fingerprint(clip, package, caption_style=style, duration=duration, ref=str(pub.id)))
+    return out[:limit]
+
+
+def _originality(packages: list[dict]) -> dict[str, list[str]]:
+    """The originality guardrail (P2). Returns {package_id: reasons} for packages it holds; records
+    the check on each clip. A flagged clip first gets its other title options tried."""
+    from types import SimpleNamespace
+
+    from ..shorts import originality
+
+    held: dict[str, list[str]] = {}
+    with session_scope() as db:
+        cfg = app_settings.get_section(db, "shorts")
+        if not cfg.originality_gate:
+            return held
+        ocfg = originality.OriginalityConfig(threshold=cfg.originality_threshold, compare_last=cfg.originality_compare_last,
+                                             streak=cfg.originality_streak)
+        going_out: dict[str, list] = {}  # clips approved earlier in this same run count as recent posts too
+        for p in sorted(packages, key=lambda x: (x["platform"], x.get("rank") or 0)):
+            package = db.get(OutputPackage, uuid.UUID(p["package_id"]))
+            if package is None:
+                continue
+            clip = db.get(Clip, package.clip_id)
+            render = db.get(Render, package.render_id) if package.render_id else None
+            style, duration = _caption_and_length(render, clip)
+            recent = going_out.get(package.platform, [])[::-1] + recent_fingerprints(
+                db, package.platform, exclude_clip=clip.id, limit=ocfg.compare_last)
+            fp = originality.fingerprint(clip, package, caption_style=style, duration=duration, ref=str(clip.id))
+            result = originality.check(fp, recent, ocfg)
+            if result.flagged:
+                current = fp.title
+                for variant in (clip.shorts or {}).get("packaging_variants") or []:
+                    if variant["title"] == current:
+                        continue
+                    trial = SimpleNamespace(title=variant["title"] if package.platform == "youtube" else "",
+                                            caption=variant["instagram_caption"], metadata_method=f"variant:{variant['template']}")
+                    trial_fp = originality.fingerprint(clip, trial, caption_style=style, duration=duration, ref=str(clip.id))
+                    retry = originality.check(trial_fp, recent, ocfg)
+                    if not retry.flagged:
+                        apply_variant(package, variant)
+                        package.metadata_method = f"variant:{variant['template']}"
+                        retry.switched_to = variant["rank"]
+                        retry.reasons = [f"switched to title option #{variant['rank']}: " + "; ".join(result.reasons)]
+                        result, fp = retry, trial_fp
+                        break
+            if result.flagged:
+                held[p["package_id"]] = result.reasons
+            going_out.setdefault(package.platform, []).append(fp)
+            flags = dict((clip.shorts or {}).get("originality_flags") or {})
+            flags[package.platform] = {**result.to_dict(), "at": utcnow().isoformat()}
+            clip.shorts = {**(clip.shorts or {}), "originality_flags": flags}
+    return held
 
 
 def _schedule_hint(project_id: str) -> dict | None:

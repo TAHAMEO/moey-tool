@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from ..db.base import utcnow
-from ..db.models import MetricSnapshot, Publication, SocialAccount
+from ..db.models import Clip, MetricSnapshot, OutputPackage, Publication, Render, SocialAccount
 from ..platforms import google, instagram, youtube
 from ..platforms.http import PlatformError
 
@@ -25,6 +25,7 @@ YT_NOT_IN_API = {
     "impressions": "not exposed by the YouTube Analytics API (YouTube Studio only)",
     "impressionClickThroughRate": "not exposed by the YouTube Analytics API (YouTube Studio only)",
     "saves": "YouTube does not report saves",
+    "viewed_rate": "YouTube Studio only (\"viewed vs. swiped away\") — import a Studio CSV to add it",
 }
 
 
@@ -77,7 +78,42 @@ def _youtube(db: Session, account: SocialAccount, publication: Publication) -> t
     except PlatformError as exc:
         for name in YT_ANALYTICS_METRICS:
             unavailable[f"analytics_{name}"] = f"Analytics API unavailable: {str(exc)[:120]}"
+    _youtube_shorts(db, auth, publication, start, end, metrics, unavailable)
     return metrics, unavailable, "youtube_data_api+youtube_analytics_api"
+
+
+def _youtube_shorts(db: Session, auth, publication: Publication, start: str, end: str, metrics: dict, unavailable: dict) -> None:
+    """Early retention: views past the first seconds and the audience-retention curve (retention
+    at 3 s, at the end, replays). Asked separately so one unsupported report never loses the rest."""
+    from . import retention
+
+    try:
+        report = youtube.analytics_report(auth, publication.external_id, start, end, ["engagedViews"])
+        rows = report.get("rows") or []
+        headers = [h["name"] for h in report.get("columnHeaders", [])]
+        value = dict(zip(headers, rows[0], strict=False)).get("engagedViews") if rows else None
+        if isinstance(value, (int, float)):
+            metrics["analytics_engagedViews"] = float(value)
+        else:
+            unavailable["analytics_engagedViews"] = "YouTube Analytics has no data yet (typically 24–72 h delay)"
+    except PlatformError as exc:
+        unavailable["analytics_engagedViews"] = f"Analytics API unavailable: {str(exc)[:120]}"
+    try:
+        curve = youtube.retention_curve(auth, publication.external_id, start, end)
+    except PlatformError as exc:
+        unavailable["first_3s_retention"] = f"retention report unavailable: {str(exc)[:120]}"
+        return
+    package = db.get(OutputPackage, publication.package_id)
+    render = db.get(Render, package.render_id) if package and package.render_id else None
+    kept = (render.edit_decisions or {}).get("kept_intervals") if render else None
+    clip = db.get(Clip, package.clip_id) if package else None
+    duration = sum(b - a for a, b in kept) if kept else ((clip.end_s - clip.start_s) if clip else 0.0)
+    derived = retention.curve_metrics(curve, duration)
+    if derived:
+        metrics.update(derived)
+    else:
+        for name in ("first_3s_retention", "end_retention", "replay_ratio"):
+            unavailable[name] = "no audience-retention data yet (YouTube needs enough views and 24–72 h)"
 
 
 def _instagram(db: Session, account: SocialAccount, publication: Publication) -> tuple[dict, dict, str]:

@@ -172,6 +172,32 @@ function ShortsRows({ settings, save, editable }: SectionProps) {
           </div>
         )}
       </Row>
+      <Row className="space-y-4">
+        <Label>Shorts: don't repeat yourself</Label>
+        <Toggle checked={s.originality_gate} disabled={!editable} onChange={(v) => set({ originality_gate: v })}
+          label="Check against my last posts before publishing" description="Compares the opening type, structure, captions and title with your last posts. Too alike: another title option is used if that fixes it; otherwise the clip waits for your review instead of going out automatically." />
+        {s.originality_gate && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <NumberField label="Compare with last" value={s.originality_compare_last} min={5} max={30} suffix="posts" disabled={!editable} onCommit={(v) => set({ originality_compare_last: v })} />
+            <NumberField label="Too alike from" value={Math.round(s.originality_threshold * 100)} min={50} max={100} suffix="%" disabled={!editable} onCommit={(v) => set({ originality_threshold: v / 100 })} />
+            <NumberField label="Same template in a row" value={s.originality_streak} min={0} max={20} suffix="max" disabled={!editable} onCommit={(v) => set({ originality_streak: v })} />
+          </div>
+        )}
+      </Row>
+      <Row className="space-y-4">
+        <Label>Shorts: learn from the first hours</Label>
+        <Toggle checked={s.retention_loop} disabled={!editable} onChange={(v) => set({ retention_loop: v })}
+          label="Early-retention feedback" description="After each analytics check, every posted clip gets its early numbers (viewed vs. swiped away, still watching at 3 s, share watched, replays) and a flag when it flopped, with a suggestion. Nothing is deleted or re-edited for you. Import YouTube Studio CSVs in the Learning Center." />
+        {s.retention_loop && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <NumberField label="Flag when viewed below" value={Math.round(s.flop_viewed_rate * 100)} min={0} max={100} suffix="%" disabled={!editable} onCommit={(v) => set({ flop_viewed_rate: v / 100 })} />
+            <NumberField label="…or at 3 s below" value={Math.round(s.flop_first_3s_retention * 100)} min={0} max={200} suffix="%" disabled={!editable} onCommit={(v) => set({ flop_first_3s_retention: v / 100 })} />
+            <NumberField label="…or watched below" value={s.flop_avg_viewed_pct} min={0} max={200} suffix="%" disabled={!editable} onCommit={(v) => set({ flop_avg_viewed_pct: v })} />
+          </div>
+        )}
+        <Toggle checked={s.learn_from_retention} disabled={!editable || !s.retention_loop || !s.packaging_variants} onChange={(v) => set({ learn_from_retention: v })}
+          label="Rank title options by what kept viewers" description="Title styles that held viewers better on your earlier posts move up a little (only after 3+ posts of a style)." />
+      </Row>
     </>
   );
 }

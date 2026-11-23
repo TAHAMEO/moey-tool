@@ -5,17 +5,18 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...analytics import compare
+from ...analytics import compare, retention
 from ...db.base import get_db, utcnow
 from ...db.models import Experiment, LearningRecord, MetricSnapshot, OutputPackage, Publication, Strategy
 from ...jobs import queue
 from ...learning import engine
 from ...security.audit import audit
+from ...services import app_settings
 from ..deps import Principal, admin, client_ip, editor, viewer
 
 router = APIRouter(tags=["learning"])
@@ -50,6 +51,57 @@ def collect_now(publication_id: uuid.UUID, db: Session = Depends(get_db), _: Pri
     job = queue.enqueue(db, "analytics.collect", {"publication_id": str(publication_id)},
                         dedupe_key=f"analytics-manual:{publication_id}")
     return {"job_id": str(job.id)}
+
+
+MAX_IMPORT_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/analytics/import")
+async def import_metrics(request: Request, file: UploadFile = File(...), platform: str | None = Form(None),
+                         db: Session = Depends(get_db), principal: Principal = Depends(editor)) -> dict:
+    """Metrics the APIs don't give (YouTube Studio's "viewed vs. swiped away", Instagram skip rate,
+    …) from a CSV export. Rows are matched to published clips by video id or exact title."""
+    if platform not in (None, "", "youtube", "instagram"):
+        raise HTTPException(400, {"code": "platform", "message": "Platform must be youtube or instagram."})
+    data = await file.read(MAX_IMPORT_BYTES + 1)
+    if len(data) > MAX_IMPORT_BYTES:
+        raise HTTPException(413, {"code": "too_large", "message": "CSV files up to 5 MB."})
+    try:
+        rows = retention.parse_csv(data)
+    except Exception as exc:  # any parse problem is the user's file
+        raise HTTPException(400, {"code": "csv", "message": f"Could not read the CSV: {exc}"[:300]}) from exc
+    result = retention.import_rows(db, rows, platform=platform or None,
+                                   source=f"csv_import:{(file.filename or 'upload.csv')[:40]}")
+    if result.imported:
+        retention.evaluate(db, app_settings.get_section(db, "shorts"))
+    audit(db, "analytics.import", user_id=principal.id, target_type="analytics", target_id=None,
+          details={"imported": result.imported, "unmatched": len(result.unmatched)}, ip=client_ip(request))
+    return result.to_dict()
+
+
+class ManualMetrics(BaseModel):
+    values: dict[str, float]
+
+
+@router.post("/analytics/publications/{publication_id}/metrics")
+def manual_metrics(publication_id: uuid.UUID, body: ManualMetrics, request: Request, db: Session = Depends(get_db),
+                   principal: Principal = Depends(editor)) -> dict:
+    """Numbers typed in by you (e.g. read off YouTube Studio)."""
+    try:
+        snap = retention.manual_entry(db, publication_id, body.values)
+    except ValueError as exc:
+        raise HTTPException(400, {"code": "metrics", "message": str(exc)}) from exc
+    retention.evaluate(db, app_settings.get_section(db, "shorts"))
+    audit(db, "analytics.manual", user_id=principal.id, target_type="publication", target_id=publication_id,
+          ip=client_ip(request))
+    return {"ok": True, "metrics": snap.metrics}
+
+
+@router.get("/analytics/retention")
+def retention_report(db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> dict:
+    """Early retention per clip, flops to re-edit or delete, hook/title styles ranked by what kept
+    viewers, and the source segments that made the strongest openings."""
+    return retention.evaluate(db, app_settings.get_section(db, "shorts"))
 
 
 @router.get("/learning/records")

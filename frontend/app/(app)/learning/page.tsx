@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Brain, Check, Download, FlaskConical, Lightbulb, Pencil, Play, Search, Sparkles, Trash2, X } from "lucide-react";
+import { Brain, Check, Download, Upload, FlaskConical, Lightbulb, Pencil, Play, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/status";
 import { useToast } from "@/components/toast";
@@ -9,7 +9,7 @@ import { Button, Card, EmptyState, Input, PageHeader, SectionHeader, Skeleton, T
 import { api, formatDate, platformName, timeAgo } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
-import type { AnalyticsSummary, Experiment, KnowledgeItem, LearningRecord, MemoryItem, PublicationAnalytics, Strategy } from "@/lib/types";
+import type { AnalyticsSummary, Experiment, KnowledgeItem, LearningRecord, MemoryItem, PublicationAnalytics, RetentionReport, Strategy } from "@/lib/types";
 
 type Tab = "insights" | "strategy" | "memory" | "knowledge";
 
@@ -81,6 +81,8 @@ function Insights() {
           </div>
         )}
       </section>
+
+      <RetentionSection />
 
       <section>
         <SectionHeader title="Findings" description="Patterns found in your results. A pattern is not proof — CLIPFORGE tests promising ones before changing its strategy." />
@@ -424,5 +426,103 @@ function KnowledgeTab() {
         })}
       </div>
     </div>
+  );
+}
+
+const SIGNAL_LABEL: Record<string, string> = {
+  viewed_rate: "viewed", first_3s_retention: "at 3 s", engaged_view_rate: "engaged views", average_percentage_viewed: "watched",
+};
+
+/** Early retention (P2): flops to fix, which hook/title styles kept viewers, CSV import. */
+function RetentionSection() {
+  const toast = useToast();
+  const { can } = useAuth();
+  const { data, reload } = useResource<RetentionReport>("/analytics/retention");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ imported: number; unmatched: string[]; skipped: string[] } | null>(null);
+
+  async function upload(file: File) {
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await api<{ imported: number; unmatched: string[]; skipped: string[] }>("/analytics/import", { form });
+      setResult(r);
+      toast(r.imported ? "success" : "info", r.imported ? `Imported numbers for ${r.imported} clip(s).` : "No rows matched a published clip.");
+      reload();
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const ranking = (data?.ranking ?? []).filter((r) => r.enough_data);
+  const pct = (v: number, key: string) => key === "average_percentage_viewed" ? `${Math.round(v)}%` : `${Math.round(v * 100)}%`;
+  return (
+    <section>
+      <SectionHeader title="Early retention" description="Did people stay past the first seconds? From YouTube's retention report and engaged views, Instagram insights, and numbers you import. YouTube Studio's “viewed vs. swiped away” isn't in the API — export it from Studio (Analytics → Content → Shorts → Export) and import the CSV here."
+        action={can("editor") && (
+          <label className={clsx("inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[12px] hover:bg-surface-2", busy && "opacity-50")}>
+            <Upload className="size-3.5" /> {busy ? "Importing…" : "Import CSV"}
+            <input type="file" accept=".csv,text/csv" className="hidden" disabled={busy}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+          </label>
+        )} />
+      {result && (result.unmatched.length > 0 || result.skipped.length > 0) && (
+        <p className="mb-3 text-[12px] text-muted">
+          {result.unmatched.length > 0 && <>Not one of your published clips: {result.unmatched.slice(0, 8).join(", ")}{result.unmatched.length > 8 ? "…" : ""}. </>}
+          {result.skipped.length > 0 && <>Skipped: {result.skipped.slice(0, 4).join("; ")}.</>}
+        </p>
+      )}
+      {!data || data.with_retention === 0 ? (
+        <EmptyState icon={<Lightbulb className="size-5" />} title="No retention numbers yet"
+          description="They arrive 1–3 days after posting from YouTube, or right away when you import a Studio CSV. Switch on “Early-retention feedback” in Settings → Clips & editing to get flop flags." />
+      ) : (
+        <div className="space-y-5">
+          {data.flops.length > 0 && (
+            <Card className="p-4">
+              <p className="mb-2 text-[13px] font-medium">Clips to look at ({data.flops.length})</p>
+              <ul className="space-y-2 text-[12px]">
+                {data.flops.map((f) => (
+                  <li key={f.publication_id}>
+                    <span className="font-medium text-text">{f.title}</span> <span className="text-faint">· {platformName(f.platform)}</span>
+                    {f.url && <> · <a className="underline" href={f.url} target="_blank" rel="noreferrer">open</a></>}
+                    <div className="text-warning">{f.flags.join("; ")}</div>
+                    {f.suggestion && <div className="text-muted">Suggestion: {f.suggestion}. Nothing is changed or deleted for you.</div>}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          <Card className="p-4">
+            <p className="mb-2 text-[13px] font-medium">What kept viewers (relative to your own posts)</p>
+            {ranking.length === 0 ? <p className="text-[12px] text-muted">A style needs 3 or more posts with retention numbers before it's ranked.</p> : (
+              <ul className="grid gap-1 text-[12px] sm:grid-cols-2">
+                {ranking.map((r) => (
+                  <li key={`${r.dimension}:${r.style}`} className="flex justify-between gap-2">
+                    <span className="text-muted">{r.dimension.replace(/_/g, " ")}: <span className="text-text">{r.style.replace(/_/g, " ")}</span></span>
+                    <span className={r.relative_retention >= 0 ? "text-success" : "text-warning"}>{r.relative_retention >= 0 ? "+" : ""}{r.relative_retention.toFixed(2)} · {r.posts} posts</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          {Object.keys(data.segments).length > 0 && (
+            <Card className="p-4">
+              <p className="mb-2 text-[13px] font-medium">Strongest openings by source video</p>
+              <ul className="space-y-1 text-[12px]">
+                {Object.entries(data.segments).flatMap(([src, items]) => items.slice(0, 3).map((i) => (
+                  <li key={`${src}:${i.clip_id}:${i.platform}`} className="flex justify-between gap-2">
+                    <span className="truncate text-muted">{Math.floor(i.start_s / 60)}:{String(Math.floor(i.start_s % 60)).padStart(2, "0")} — “{i.hook}”</span>
+                    <span className="shrink-0 text-text">{pct(i.value, i.metric)} {SIGNAL_LABEL[i.metric] ?? i.metric}</span>
+                  </li>
+                )))}
+              </ul>
+            </Card>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

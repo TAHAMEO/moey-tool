@@ -121,6 +121,16 @@ class ShortsSettings(_Section):
     title_min_chars: int = Field(30, ge=10, le=90)
     title_max_chars: int = Field(50, ge=20, le=95)
     first_frame_words: int = Field(2, ge=1, le=5)
+    # P2 — guardrails and feedback
+    originality_gate: bool = False     # compare with the last posts; repeat -> other title option, else hold
+    originality_threshold: float = Field(0.85, ge=0.5, le=1)
+    originality_compare_last: int = Field(10, ge=5, le=30)
+    originality_streak: int = Field(5, ge=0, le=20)  # same template this many times in a row -> flag (0 = off)
+    retention_loop: bool = False       # early-retention metrics, flop flags, ranking of hook/title styles
+    flop_viewed_rate: float = Field(0.55, ge=0, le=1)       # "viewed" (vs swiped away) below this
+    flop_first_3s_retention: float = Field(0.6, ge=0, le=2)  # audience still there at 3 s below this
+    flop_avg_viewed_pct: float = Field(40, ge=0, le=200)    # average percentage viewed below this
+    learn_from_retention: bool = False  # nudge title-option ranking by what kept viewers (needs >= 3 posts per style)
 
 
 class BrandSettings(_Section):

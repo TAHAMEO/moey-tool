@@ -73,7 +73,12 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
   text are chosen by rules over what the speech recogniser heard; a misheard word can end up in a
   title option (the options list is there so you can pick another). Frame-one text is burned into
   the video: switching to another option changes the title and description, not frame one, until
-  the clip is re-rendered. No retention data feeds the ranking yet (that is P2).
+  the clip is re-rendered.
+- **Early retention is only as early as the platforms allow.** The YouTube Analytics API usually has
+  nothing for 24–72 hours, and YouTube Studio's "viewed vs. swiped away" is not in the API at all —
+  import it from a Studio CSV. The retention report and `engagedViews` calls are written to Google's
+  documentation and tested against a local fake of it, not yet against a real channel. Style rankings
+  need 3+ posts per style and are correlations, not proof.
 - **No cloud speech or vision services**: audio and frames are always processed on your server
   (only text is sent to AI providers), so transcription quality is bounded by the local engines.
 - **Speech recognition**: the bundled Vosk model is English-only, adds no punctuation (CLIPFORGE

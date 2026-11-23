@@ -11,7 +11,7 @@ SetCompressor /SOLID lzma
 ManifestDPIAware true
 
 !ifndef VERSION
-  !define VERSION "0.3.3"
+  !define VERSION "0.3.4"
 !endif
 !ifndef PAYLOAD
   !define PAYLOAD "build\payload"

@@ -174,7 +174,7 @@ titles come from templates.
 | Publishing | Ask me first / Publish automatically / Drafts only; platforms; time zone; late-post limit; daily limits; YouTube visibility, playlist, caption track; Instagram feed sharing; made-for-kids |
 | Accounts | Connect or disconnect YouTube, Instagram and Google Drive with one click (sign-in on the platform's own page in a pop-up); a guided one-time set-up if this copy doesn't have its Google/Instagram app built in |
 | Sources | Download public YouTube/Instagram videos (on/off) |
-| Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music; **Shorts** switches (all off until you turn them on): score and fix the first 3 seconds, hold weak openings for review, make clips loop, re-hook at 20–25 s, kinetic captions, save each clip's transcript, 2–3 title and first-frame options |
+| Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music; **Shorts** switches (all off until you turn them on): score and fix the first 3 seconds, hold weak openings for review, make clips loop, re-hook at 20–25 s, kinetic captions, save each clip's transcript, 2–3 title and first-frame options, check against my last posts, early-retention feedback |
 | Brand | Channel name, accent colour (highlighted caption word), watermark and its position |
 | Live streams | Create live sessions and get the SRT address for OBS |
 | Media library | Music, sound effects, B-roll, logos and original masters — only files you confirm you have the rights to |
@@ -201,6 +201,16 @@ titles come from templates.
   used; press **Use** on another to switch the title, description and hashtags of posts that
   haven't gone out yet. The words on frame one are part of the video, so they change only when the
   clip is re-rendered.
+- **Check against my last posts before publishing** — if a clip is made the same way as your recent
+  posts (same kind of opening, structure, captions and title shape — five times in a row — or nearly
+  the same title), another title option is used when that fixes it; otherwise it waits for you.
+- **Early-retention feedback** — each posted clip shows how many viewers stayed (viewed vs. swiped
+  away, still watching at 3 s, share watched, replays) and a flag with a suggestion when it flopped.
+  YouTube's numbers arrive after 1–3 days; "viewed vs. swiped away" only exists in YouTube Studio:
+  export it there (Analytics → Content → Shorts → Export) and use **Import CSV** under Learning
+  Center → Insights → Early retention. Nothing is deleted or re-edited for you.
+- **Rank title options by what kept viewers** — title styles that held viewers better on your earlier
+  posts move up a little (after 3+ posts of a style).
 
 ## Live streams
 

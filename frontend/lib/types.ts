@@ -159,6 +159,17 @@ export type ClipShorts = {
   first_frame_text?: string;
   packaging_variants?: PackagingVariant[];
   seo?: { transcript_asset_id: string; keyword: string; keywords: string[]; words: number };
+  originality_flags?: Record<string, { flagged: boolean; max_similarity: number; reasons: string[]; compared: number;
+                                       switched_to: number | null; matches: { title: string; similarity: number }[] }>;
+  analytics?: Record<string, { signals: Record<string, number>; flags: string[]; suggestion: string | null; sources: string[];
+                               age_hours: number | null; missing: string[] }>;
+};
+
+export type RetentionReport = {
+  ranking: { dimension: string; style: string; posts: number; relative_retention: number; enough_data: boolean }[];
+  segments: Record<string, { clip_id: string; start_s: number; end_s: number; hook: string; platform: string; metric: string; value: number }[]>;
+  flops: { clip_id: string; publication_id: string; platform: string; title: string; flags: string[]; suggestion: string | null; url: string | null }[];
+  clips: number; with_retention: number; note: string;
 };
 
 export type PackagingVariant = {
@@ -263,6 +274,9 @@ export type ShortsSettings = {
   rehook: boolean; rehook_from_s: number; rehook_to_s: number; rehook_min_clip_s: number; rehook_zoom: boolean; rehook_text: boolean;
   rehook_framing: boolean; kinetic_captions: boolean; seo_transcript: boolean; packaging_variants: boolean;
   title_min_chars: number; title_max_chars: number; first_frame_words: number;
+  originality_gate: boolean; originality_threshold: number; originality_compare_last: number; originality_streak: number;
+  retention_loop: boolean; flop_viewed_rate: number; flop_first_3s_retention: number; flop_avg_viewed_pct: number;
+  learn_from_retention: boolean;
 };
 export type BrandSettings = { accent_color: string; watermark_library_item_id: string | null; watermark_position: string; channel_name: string };
 export type RetentionSettings = { source_media_days: number; work_files_days: number; live_buffer_minutes: number; keep_renders_days: number };

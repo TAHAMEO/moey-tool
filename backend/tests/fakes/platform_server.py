@@ -35,6 +35,9 @@ class FakePlatforms:
         self.quota_exceeded = False
         self.requests: list[dict] = []
         self.analytics_rows: dict[str, list] = {}
+        #: video id -> [[elapsedVideoTimeRatio, audienceWatchRatio, relativeRetentionPerformance], ...]
+        self.retention_curves: dict[str, list] = {}
+        self.engaged_views: dict[str, float] = {}
         self.ig_insights: dict[str, dict] = {}
         self.video_updates: list[dict] = []
         self.google_clients = {("cid", "csecret")}
@@ -94,6 +97,17 @@ class FakePlatforms:
                     return self._send(200, raw=server.caption_text.get(m.group(1), "").encode(), ctype="text/plain")
                 if path == "/v2/reports":
                     vid = q.get("filters", "").split("==")[-1]
+                    if q.get("dimensions") == "elapsedVideoTimeRatio":
+                        # Documented shape: one video filter is required for the retention report.
+                        if not q.get("filters", "").startswith("video=="):
+                            return self._send(400, {"error": {"message": "filters must name one video"}})
+                        names = ["elapsedVideoTimeRatio", *q.get("metrics", "").split(",")]
+                        return self._send(200, {"columnHeaders": [{"name": n} for n in names],
+                                                "rows": server.retention_curves.get(vid, [])})
+                    if q.get("metrics") == "engagedViews":
+                        value = server.engaged_views.get(vid)
+                        return self._send(200, {"columnHeaders": [{"name": "video"}, {"name": "engagedViews"}],
+                                                "rows": [[vid, value]] if value is not None else []})
                     rows = server.analytics_rows.get(vid)
                     headers = [{"name": "video"}] + [{"name": n} for n in q.get("metrics", "").split(",")]
                     return self._send(200, {"columnHeaders": headers, "rows": [[vid, *rows]] if rows else []})

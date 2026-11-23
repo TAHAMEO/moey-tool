@@ -8,12 +8,14 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from ..analytics import collect as collector
+from ..analytics import retention
 from ..db.base import session_scope, utcnow
 from ..db.models import MetricSnapshot, Publication
 from ..jobs import queue
 from ..jobs.registry import JobContext, PermanentError, RetryableError, handler
 from ..learning import engine
 from ..platforms.http import PlatformError
+from ..services import app_settings
 
 
 @handler("analytics.collect", queue="default", needs_secrets=True)
@@ -29,6 +31,10 @@ def collect_job(ctx: JobContext) -> dict:
                 raise RetryableError(str(exc)) from exc
             raise PermanentError(f"Analytics unavailable: {exc}", code="analytics") from exc
         result = {"metrics": snapshot.metrics, "unavailable": list(snapshot.unavailable), "age_hours": snapshot.age_hours}
+        shorts = app_settings.get_section(db, "shorts")
+        if shorts.retention_loop:  # early-retention signals and flop flags on every clip
+            report = retention.evaluate(db, shorts)
+            result["flops"] = len(report["flops"])
     # Enough fresh data can change what we know: schedule a learning pass.
     with session_scope() as db:
         queue.enqueue(db, "learning.run", {}, dedupe_key="learning-run", run_after=utcnow() + timedelta(minutes=10),
