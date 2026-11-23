@@ -169,7 +169,7 @@ jobs:
           $render = & $py (Join-Path $env:GITHUB_WORKSPACE "repo\installer\windows\tests\render_check.py") 2>&1 | Out-String
           $renderCode = $LASTEXITCODE
           $ErrorActionPreference = "Stop"
-          ($render -split "`n" | Where-Object { $_ -match "^(ffmpeg|render|mezzanine|Traceback|  File|\S+Error)" }) | ForEach-Object { Write-Host $_ }
+          ($render -split "`n" | Where-Object { $_ -match "^(ffmpeg|render|live|mezzanine|Traceback|  File|\S+Error)" }) | ForEach-Object { Write-Host $_ }
           if ($renderCode -ne 0) { $problems += "rendering a clip failed (see above)" }
 
           # 3. Stop and start again with the launcher (what the shortcuts do).
