@@ -16,6 +16,7 @@ checkpointed in PostgreSQL): understand -> recall -> act -> respond.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypedDict
@@ -80,7 +81,7 @@ class ChatState(TypedDict, total=False):
 
 class LLMIntent(BaseModel):
     intent: Literal["process_source", "publish", "approve", "status", "analytics", "learning", "remember",
-                    "forget", "costs", "connect", "help", "question", "chat", "need_source"]
+                    "forget", "costs", "connect", "help", "question", "chat", "need_source", "edit"]
     count: int | None = Field(None, ge=1, le=30)
     platforms: list[Literal["youtube", "instagram"]] = Field(default_factory=list)
     publish: bool = False
@@ -139,6 +140,8 @@ def recall(state: ChatState) -> ChatState:
 
 def act(state: ChatState) -> ChatState:
     intent = state["parsed"]["intent"]
+    if intent in ("chat", "question") and _about_my_clips(state["text"]):
+        intent = state["parsed"]["intent"] = "edit"  # the assistant answers with the project's clips at hand
     handler = _ACTIONS.get(intent, _act_conversation)
     try:
         return handler(state)
@@ -549,10 +552,45 @@ def _act_learning(state: ChatState) -> ChatState:
             "actions": [{"step": "Reviewed learning records", "detail": f"{len(facts['records'])} active finding(s)"}]}
 
 
+_MY_CLIPS = re.compile(r"\b(my|the|these|this|those|our)\s+(clips?|shorts?|reels?|titles?|captions?|hooks?|edits?)\b"
+                       r"|\b(clip|short|reel)\s*#?\d{1,2}\b", re.IGNORECASE)
+
+
+def _about_my_clips(text: str) -> bool:
+    return bool(_MY_CLIPS.search(text or ""))
+
+
+def _act_edit(state: ChatState) -> ChatState:
+    """Change or judge existing clips, or control the app, through the assistant (brain/assistant.py)."""
+    from . import assistant
+
+    result = assistant.make_plan(state["text"], conversation_id=state.get("conversation_id"),
+                                 memories=state.get("memories") or [], turns=state.get("turns") or [])
+    plan, facts, via = result["plan"], result["facts"], result["via"]
+    asks_advice = bool(re.search(r"\b(improve|better|feedback|review|weak|wrong|suggest|tips?|advice)\b", state["text"],
+                                 re.IGNORECASE))
+    info: dict[str, Any] = {"via": via, "project": facts.get("project"), "clip_count": len(facts.get("clips") or [])}
+    actions: list[dict] = []
+    cards: list[dict] = []
+    if plan is not None:
+        outcome = assistant.execute(plan, facts, user_id=state["user_id"], role=state["user_role"])
+        info.update(reply=plan.reply.strip(), done=outcome["done"], problems=outcome["problems"])
+        actions, cards = list(outcome["done"]), outcome["cards"]
+    if via is None:
+        info["no_model"] = True
+        if asks_advice:
+            info["advice"] = assistant.advice(facts)
+    else:
+        actions.append({"step": "Understood by", "detail": via})
+    return {"facts": {"assistant": info}, "actions": actions, "cards": cards}
+
+
 def _act_conversation(state: ChatState) -> ChatState:
     intent = state["parsed"]["intent"]
     if intent in ("greeting", "help", "need_source", "connect"):
         return {"facts": {}}
+    if intent == "chat":
+        return _act_edit(state)  # the assistant: it knows your projects and can act on them
     question = state["text"]
     if intent == "question":
         try:
@@ -592,6 +630,7 @@ _ACTIONS = {
     "costs": _act_costs,
     "analytics": _act_analytics,
     "learning": _act_learning,
+    "edit": _act_edit,
 }
 
 
@@ -770,6 +809,36 @@ def _reply_learning(state: ChatState) -> str:
     return "\n".join(lines)
 
 
+LOCAL_AI_HINT = ("Turn on local AI for anything I can't do without it: AI Connections → Local AI on this PC "
+                 "(free; runs on your computer with Ollama, nothing leaves your PC).")
+
+
+def _reply_edit(state: ChatState) -> str:
+    a = (state.get("facts") or {}).get("assistant") or {}
+    done, problems = a.get("done") or [], a.get("problems") or []
+    parts = []
+    if a.get("reply"):
+        parts.append(a["reply"])
+    if done and not a.get("reply"):
+        parts.append("Done:\n" + "\n".join(f"• {d['step']}: {d['detail']}" for d in done))
+    elif done:
+        parts.append("Changes made: " + "; ".join(f"{d['step']} — {d['detail']}" for d in done) + ".")
+    if problems:
+        parts.append("I couldn't do everything: " + " ".join(problems))
+    if a.get("advice"):
+        parts.append("From the clip scores:\n" + a["advice"])
+    if not parts:
+        if not a.get("project"):
+            return ("There's no project yet. Paste a YouTube or Instagram link, or attach a video, and I'll make the clips "
+                    "first." + ("\n\n" + LOCAL_AI_HINT if a.get("no_model") else ""))
+        parts.append("I can change clips without AI when you're specific — for example “make clip 2 5 seconds shorter”, "
+                     "“cut the first 3 seconds of clip 1”, “use karaoke captions on all clips” or "
+                     "“rename clip 3 to \"My best tip\"”.")
+    if a.get("no_model") and not done:
+        parts.append(LOCAL_AI_HINT)
+    return "\n\n".join(p for p in parts if p).strip()
+
+
 def _reply_conversation(state: ChatState) -> str:
     intent = state["parsed"]["intent"]
     f = state.get("facts") or {}
@@ -787,7 +856,7 @@ def _reply_conversation(state: ChatState) -> str:
         return "You can connect AI models in AI Connections and YouTube/Instagram/Google Drive in Settings → Connections. I'll walk you through any step that needs your login."
     if f.get("no_model"):
         return ("I don't have an AI model connected to answer open questions right now. Everything in the video pipeline still works "
-                "locally. Connect a provider in AI Connections — Ollama gives you free local models.")
+                "locally. " + LOCAL_AI_HINT)
     answer = f.get("answer", "")
     knowledge = f.get("knowledge")
     if knowledge:
@@ -810,6 +879,7 @@ _REPLIES = {
     "costs": _reply_costs,
     "analytics": _reply_analytics,
     "learning": _reply_learning,
+    "edit": _reply_edit,
 }
 for _name in ("greeting", "help", "need_source", "connect", "question", "chat"):
     _REPLIES[_name] = _reply_conversation

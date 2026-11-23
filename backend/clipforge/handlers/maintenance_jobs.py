@@ -130,7 +130,7 @@ def run_backup(label: str = "scheduled") -> dict:
     target.mkdir(parents=True, exist_ok=True)
     dump = target / "database.dump"
     proc = subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--file", str(dump), settings.psycopg_dsn],
-                          check=False, capture_output=True, text=True, timeout=3600)
+                          check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
     if proc.returncode != 0:
         raise RuntimeError(f"pg_dump failed: {proc.stderr[-500:]}")
     manifest = {"name": target.name, "created_at": now.isoformat(), "database": dump.name,
@@ -138,14 +138,14 @@ def run_backup(label: str = "scheduled") -> dict:
     try:
         from ..memory.service import get_memory
 
-        (target / "memory-export.json").write_text(json.dumps(get_memory().export(), default=str))
+        (target / "memory-export.json").write_text(json.dumps(get_memory().export(), default=str), encoding="utf-8")
         manifest["memory_export"] = "memory-export.json"
     except Exception as exc:  # noqa: BLE001 - the database dump already contains the vectors
         manifest["memory_export_error"] = str(exc)[:200]
     history = settings.data_dir / "mem0" / "history.db"
     if history.exists():
         shutil.copy2(history, target / "mem0-history.db")
-    (target / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (target / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     backups = sorted(p for p in settings.backups_dir.iterdir() if p.is_dir())
     for old in backups[:-14]:
         shutil.rmtree(old, ignore_errors=True)

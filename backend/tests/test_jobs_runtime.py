@@ -14,7 +14,7 @@ from clipforge.brain.runtime import ChildSpec, await_approval, await_children, g
 from clipforge.db.base import session_scope, utcnow
 from clipforge.db.models import Job, JobEvent
 from clipforge.jobs import queue
-from clipforge.jobs.registry import RetryableError, handler
+from clipforge.jobs.registry import PermanentError, RetryableError, handler
 from clipforge.jobs.worker import Worker
 
 COUNTS: dict[str, int] = {}
@@ -249,3 +249,65 @@ def test_resumes_do_not_consume_retry_budget():
     assert job.status == "completed", job.error
     assert job.result["log"] == ["delegate", "approve", "glitch"]
     assert job.attempts == 2  # one real failure + the successful retry
+
+
+# ------------------------------------------------- Retry after a step failed for good
+BROKEN: set[str] = set()
+
+
+@handler("test.flaky_step", queue="media")
+def _flaky_step(ctx):
+    if "step" in BROKEN:
+        raise PermanentError("no speech model installed")  # fails for good until the cause is fixed
+    return {"value": 42}
+
+
+def node_strict(state: WFState, config) -> WFState:
+    outcome = await_children(config, "step", [ChildSpec(key="s", job_type="test.flaky_step", payload={}, queue="media")],
+                             label="Transcribing")["s"]
+    if not outcome.ok:  # like the video workflow: a failed step fails the whole run
+        raise PermanentError(outcome.error["message"])
+    return {"log": [f"step={outcome.result['value']}"]}
+
+
+@handler("test.strict_workflow")
+def _strict_wf(ctx):
+    g = StateGraph(WFState)
+    g.add_node("strict", node_strict)
+    g.add_edge(START, "strict")
+    g.add_edge("strict", END)
+    values = run_graph_job(ctx, g.compile(checkpointer=get_checkpointer()), {"log": []})
+    return {"log": values["log"]}
+
+
+def test_retry_reruns_the_failed_step_instead_of_replaying_its_failure():
+    """Retry after fixing the cause (e.g. installing the speech model) must run the failed step
+    again and continue, not replay the stored failure."""
+    BROKEN.clear()
+    BROKEN.add("step")
+    with session_scope() as db:
+        job_id = queue.enqueue(db, "test.strict_workflow", {}).id
+    _drain()
+    job = _job(job_id)
+    assert job.status == "failed" and "no speech model" in job.error["message"]
+    BROKEN.clear()  # the cause is fixed
+    with session_scope() as db:
+        queue.retry(db, job_id)
+    _drain()
+    job = _job(job_id)
+    assert job.status == "completed", job.error
+    assert job.result["log"] == ["step=42"]
+    # And a second failure + retry works the same way.
+    BROKEN.add("step")
+    with session_scope() as db:
+        job_id = queue.enqueue(db, "test.strict_workflow", {}).id
+    _drain()
+    with session_scope() as db:
+        queue.retry(db, job_id)
+    _drain()
+    assert _job(job_id).status == "failed"  # still broken: fails again, clearly
+    BROKEN.clear()
+    with session_scope() as db:
+        queue.retry(db, job_id)
+    _drain()
+    assert _job(job_id).status == "completed"

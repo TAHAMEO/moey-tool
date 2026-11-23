@@ -57,6 +57,8 @@ class FakeProviderServer:
                         self._send(200, {"data": [{"id": i} for i in ids]})
                     else:
                         self._send(200, {"object": "list", "data": [{"id": i, "object": "model"} for i in ids]})
+                elif self.path.startswith("/api/version"):
+                    self._send(200, {"version": "0.12.0-fake"})
                 elif self.path.startswith("/api/tags"):
                     ids = server.behavior.get("models", ["fake-small-1b", "fake-pro-70b"])
                     self._send(200, {"models": [{"name": i} for i in ids]})
@@ -73,6 +75,23 @@ class FakeProviderServer:
                 if server.behavior.get("delay"):
                     time.sleep(server.behavior["delay"])
                 if self._fail_if_needed():
+                    return
+                if self.path == "/api/pull":  # Ollama: NDJSON progress, then success
+                    lines = [{"status": "pulling manifest"}]
+                    for digest, total in (("sha256:aaa", 3_000_000), ("sha256:bbb", 1_000_000)):
+                        lines += [{"status": f"pulling {digest[7:]}", "digest": digest, "total": total, "completed": done}
+                                  for done in (0, total // 2, total)]
+                    lines += [{"status": "verifying sha256 digest"}, {"status": "writing manifest"}, {"status": "success"}]
+                    if server.behavior.get("pull_error"):
+                        lines = [{"status": "pulling manifest"}, {"error": server.behavior["pull_error"]}]
+                    payload = b"".join(json.dumps(line).encode() + b"\n" for line in lines)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    if not server.behavior.get("pull_error"):
+                        server.behavior["models"] = [*server.behavior.get("models", []), body.get("model")]
                     return
                 reply = server.behavior.get("reply", "OK")
                 if callable(reply):

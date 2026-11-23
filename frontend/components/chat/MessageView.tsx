@@ -42,7 +42,8 @@ function SettingsSuggestion({ card }: { card: Extract<Card, { type: "settings_su
   const toast = useToast();
   const [done, setDone] = useState(false);
   const labels: Record<string, string> = { max_seconds: "Max length", min_seconds: "Min length", caption_style: "Caption style",
-    default_count: "Clips per video", aspects: "Formats" };
+    default_count: "Clips per video", aspects: "Formats", remove_silences: "Remove pauses", punch_in_zoom: "Punch-in zoom",
+    burn_captions: "Burned-in captions" };
   return (
     <div className="mt-3 max-w-xl rounded-xl border border-border bg-surface p-3">
       <p className="text-[13px] font-medium">Make this a default setting?</p>

@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowRight, Check, CheckCircle2, ExternalLink, RotateCcw
 import Link from "next/link";
 import { useState } from "react";
 import { choiceIso, choiceProblem, defaultChoice, formatWhen, SchedulePicker, type ScheduleChoice } from "@/components/schedule";
-import { AccessBadge, ACCESS_LABELS, PIPELINE_STEPS, StatusBadge, stepIndex } from "@/components/status";
+import { AccessBadge, ACCESS_LABELS, PIPELINE_STEPS, StatusBadge, StepProgress, stepIndex } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, ProgressBar } from "@/components/ui";
 import { api, platformName } from "@/lib/api";
@@ -74,7 +74,7 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
           <p className="truncate text-sm font-semibold">{project?.title ?? "Video project"}</p>
           <p className="mt-0.5 text-[12px] text-faint">{job.type === "workflow.video" ? "Production" : job.type}</p>
         </div>
-        <StatusBadge label={job.label} status={job.status} />
+        <StatusBadge label={job.label} status={job.step ? "running" : job.status} />
       </div>
 
       {job.type === "workflow.video" && !failed && !accessLimited && (
@@ -92,6 +92,7 @@ export function JobCard({ jobId, projectId }: { jobId: string; projectId: string
               );
             })}
           </ol>
+          {!finished && job.step && <StepProgress step={job.step} className="mt-3" />}
         </div>
       )}
 

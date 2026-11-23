@@ -9,7 +9,7 @@ import { Choice, Chips } from "@/components/settings/shared";
 import { Badge, StatusBadge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, Input, Label, Modal, ProgressBar, Select, Textarea, Toggle } from "@/components/ui";
-import { api, timeAgo, uploadWithProgress } from "@/lib/api";
+import { api, formatBytes, timeAgo, uploadMedia } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
 import type { AllSettings, BatchRecipe, BatchSummary, FolderListing } from "@/lib/types";
@@ -41,7 +41,7 @@ export function FolderBatchDialog({ open, onClose, onStarted }: { open: boolean;
   const [moveDone, setMoveDone] = useState(false);
   const [recipe, setRecipe] = useState<BatchRecipe | null>(null);
   const [newTime, setNewTime] = useState("12:00");
-  const [progress, setProgress] = useState<{ done: number; total: number; current: string; fraction: number } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string; fraction: number; size?: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const r = recipe ?? defaultRecipe(settings);
@@ -73,12 +73,11 @@ export function FolderBatchDialog({ open, onClose, onStarted }: { open: boolean;
       let failed = 0;
       for (let i = 0; i < files.length; i++) {
         const file = files[i] as File & { webkitRelativePath?: string };
-        setProgress({ done: i, total: files.length, current: file.name, fraction: 0 });
+        setProgress({ done: i, total: files.length, current: file.name, fraction: 0, size: file.size });
         try {
-          const form = new FormData();
-          form.append("file", file);
-          const uploaded = await uploadWithProgress<{ asset_id: string }>("/chat/upload", form,
-            (fraction) => setProgress({ done: i, total: files.length, current: file.name, fraction }));
+          // In pieces of a few MB: one big request is cut off at 10 MB by the Windows app's web server.
+          const uploaded = await uploadMedia(file,
+            (fraction) => setProgress({ done: i, total: files.length, current: file.name, fraction, size: file.size }));
           await api(`/batches/${batch.id}/items`, { body: { asset_id: uploaded.asset_id, filename: file.webkitRelativePath || file.name } });
         } catch (err) {
           failed += 1;
@@ -112,6 +111,9 @@ export function FolderBatchDialog({ open, onClose, onStarted }: { open: boolean;
         <div className="space-y-3 py-2">
           <p className="text-sm font-medium">Uploading {progress.done + 1} of {progress.total}: {progress.current}</p>
           <ProgressBar value={(progress.done + progress.fraction) / progress.total} />
+          <p className="text-[12px] tabular-nums text-muted" aria-live="polite">
+            This video: {Math.floor(progress.fraction * 100)}% ({formatBytes((progress.size ?? 0) * progress.fraction)} of {formatBytes(progress.size)})
+          </p>
           <p className="text-[12px] text-muted">Keep this tab open until the upload finishes. Each video starts processing as soon as it has arrived.</p>
         </div>
       ) : (

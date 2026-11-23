@@ -179,9 +179,16 @@ def refusal(info: dict, max_seconds: float) -> DownloadError | None:
 
 
 def download(url: str, out_dir: Path, *, max_bytes: int, max_seconds: float, cache_dir: Path | None = None,
-             on_progress: Callable[[float, str], None] | None = None,
+             on_progress: Callable[..., None] | None = None,
              cancelled: Callable[[], bool] | None = None) -> Downloaded:
-    """Download one public video to ``out_dir`` (mp4 when possible). Raises :class:`DownloadError`."""
+    """Download one public video to ``out_dir`` (mp4 when possible). Raises :class:`DownloadError`.
+
+    ``on_progress(fraction, label, detail)`` is called at most twice a second while it downloads;
+    ``detail`` holds ``downloaded``/``total`` bytes, ``speed`` (bytes/s), ``eta`` (seconds), and
+    ``part``/``parts`` when video and audio come as separate files.
+    """
+    import time
+
     import yt_dlp
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -196,15 +203,42 @@ def download(url: str, out_dir: Path, *, max_bytes: int, max_seconds: float, cac
             rejected.append(problem)
         return str(problem)
 
+    # Video and audio usually arrive as two files, one after the other: progress covers both.
+    sizes: dict[str, tuple[int, int]] = {}  # file -> (bytes done, bytes in total)
+    finished: set[str] = set()
+    last_report = [0.0]
+
     def hook(status: dict) -> None:
         if cancelled and cancelled():
             raise yt_dlp.utils.DownloadCancelled("Cancelled")
-        if status.get("status") == "downloading" and on_progress:
-            total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
-            done = status.get("downloaded_bytes") or 0
-            if total and total > max_bytes * 1.05:
-                raise yt_dlp.utils.DownloadError(f"File is larger than the {max_bytes // (1024 * 1024)} MB limit")
-            on_progress(min(1.0, done / total) if total else 0.0, "Downloading")
+        state = status.get("status")
+        if state not in ("downloading", "finished") or not on_progress:
+            return
+        info = status.get("info_dict") or {}
+        name = str(status.get("filename") or info.get("format_id") or "file")
+        total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+        done = status.get("downloaded_bytes") or 0
+        if total and total > max_bytes * 1.05:
+            raise yt_dlp.utils.DownloadError(f"File is larger than the {max_bytes // (1024 * 1024)} MB limit")
+        if state == "finished":
+            finished.add(name)
+            done = total = max(done, total)
+        sizes[name] = (done, total or done)
+        now = time.monotonic()
+        if state == "downloading" and now - last_report[0] < 0.5:
+            return  # at most two updates a second (each one is a database write)
+        last_report[0] = now
+        planned = max(1, len(info.get("requested_formats") or []), len(sizes))
+        # Each file is an equal share: the next file's size is unknown until it starts.
+        current = 0.0 if state == "finished" else (done / total if total else 0.0)
+        fraction = min(1.0, (min(len(finished), planned) + current) / planned)
+        all_done = sum(d for d, _ in sizes.values())
+        all_total = sum(t for _, t in sizes.values())
+        detail = {"downloaded": int(all_done), "total": int(all_total) or None,
+                  "speed": round(float(status["speed"])) if status.get("speed") else None,
+                  "eta": int(status["eta"]) if state == "downloading" and status.get("eta") is not None else None,
+                  "part": min(len(sizes), planned), "parts": planned}
+        on_progress(fraction, "Downloading", detail)
 
     runtime = deno_path()
     options: dict[str, Any] = {

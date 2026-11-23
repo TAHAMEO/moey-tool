@@ -215,7 +215,7 @@ class WhisperXEngine(Engine):
         try:
             proc = subprocess.run([str(python), str(self._script()), "--check", "--model", self.model_label,
                                    "--models-dir", str(get_settings().models_dir)],
-                                  check=False, capture_output=True, text=True, timeout=120)
+                                  check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return False, f"WhisperX check failed: {exc}"
         if proc.returncode == 0:
@@ -228,16 +228,28 @@ class WhisperXEngine(Engine):
         proc = subprocess.run([str(python), str(self._script()), "--wav", str(wav), "--start", str(start_s),
                                "--end", str(end_s), "--language", language or "auto", "--model", self.model_label,
                                "--models-dir", str(get_settings().models_dir), "--out", str(out_path)],
-                              check=False, capture_output=True, text=True, timeout=max(600, int((end_s - start_s) * 6)))
+                              check=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=max(600, int((end_s - start_s) * 6)))
         if proc.returncode != 0:
             raise TranscriptionUnavailable(f"WhisperX failed: {(proc.stderr or proc.stdout)[-500:]}")
-        data = json.loads(out_path.read_text())
+        data = json.loads(out_path.read_text(encoding="utf-8"))
         out_path.unlink(missing_ok=True)
         return [WordOut(w["text"], start_s + w["start"], start_s + w["end"], w.get("conf", 1.0)) for w in data["words"]]
 
 
 ENGINES: dict[str, Engine] = {"whisperx": WhisperXEngine(), "faster_whisper": FasterWhisperEngine(), "vosk": VoskEngine()}
 ORDER = ("whisperx", "faster_whisper", "vosk")
+
+
+def release_models() -> None:
+    """Free the speech models loaded in this process (the large Vosk model alone holds about
+    5.5 GB) so rendering, which runs in the same media worker, has the memory it needs."""
+    import gc
+
+    with VoskEngine._lock:
+        VoskEngine._model = None
+    with FasterWhisperEngine._lock:
+        FasterWhisperEngine._models.clear()
+    gc.collect()
 
 
 def engines_status() -> list[dict]:

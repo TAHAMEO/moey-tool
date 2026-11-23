@@ -90,7 +90,7 @@ def _include_optional_routers(app: FastAPI) -> None:
     import importlib
 
     for name in ("chat", "projects", "jobs", "connections", "publishing", "analytics", "learning", "memory",
-                 "media", "live", "admin", "library", "batches"):
+                 "media", "live", "admin", "library", "batches", "uploads", "local_ai"):
         try:
             module = importlib.import_module(f"clipforge.api.routes.{name}")
         except ModuleNotFoundError as exc:

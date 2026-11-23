@@ -94,10 +94,15 @@ def test_downloader_reports_what_it_can_do():
 def test_download_stores_the_video(media_server, generic_extractor, tmp_path):
     base, root = media_server
     seen: list[float] = []
+    details: list[dict] = []
     result = pd.download(f"{base}/clip.mp4", tmp_path / "out", max_bytes=50 * 1024 * 1024, max_seconds=3600,
-                         on_progress=lambda f, _label: seen.append(f))
-    assert result.path.exists() and result.path.stat().st_size == (root / "clip.mp4").stat().st_size
+                         on_progress=lambda f, _label, detail: (seen.append(f), details.append(detail)))
+    size = (root / "clip.mp4").stat().st_size
+    assert result.path.exists() and result.path.stat().st_size == size
     assert result.info["extractor_key"] == "Generic" and seen and max(seen) == pytest.approx(1.0)
+    # Bytes, size and the number of files are reported for the progress display.
+    assert details[-1]["downloaded"] == size and details[-1]["total"] == size
+    assert details[-1]["parts"] == 1 and seen == sorted(seen)
 
 
 def test_download_size_limit(media_server, generic_extractor, tmp_path):

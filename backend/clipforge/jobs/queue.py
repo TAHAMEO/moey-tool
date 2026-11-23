@@ -27,7 +27,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.base import session_scope, utcnow
-from ..db.models import Job, JobEvent
+from ..db.models import Job, JobEvent, Project
 from ..services import redis_client
 
 log = logging.getLogger(__name__)
@@ -161,13 +161,18 @@ def heartbeat(job_id: uuid.UUID, worker_id: str, lease_seconds: int) -> dict[str
 
 # --------------------------------------------------------------- progress
 def set_progress(job_id: uuid.UUID, *, progress: float | None = None, label: str | None = None,
-                 stage: str | None = None, message: str | None = None, data: dict | None = None) -> None:
+                 stage: str | None = None, message: str | None = None, data: dict | None = None,
+                 detail: dict | None = None) -> None:
+    """``detail``: live figures for the step that is running (for a download: bytes done and in
+    total, speed, time left), shown on the job card and replaced by each update."""
     with session_scope() as db:
         job = db.get(Job, job_id)
         if job is None:
             return
         if progress is not None:
             job.progress = max(0.0, min(1.0, float(progress)))
+        if detail is not None:
+            job.checkpoint = {**(job.checkpoint or {}), "detail": detail}
         if label:
             job.status_label = label
         if stage:
@@ -404,7 +409,12 @@ def retry(db: Session, job_id: uuid.UUID) -> Job:
     job.run_after = utcnow()
     job.finished_at = None
     job.error = None
+    job.resume_value = None  # the outcome it failed on is stale now; fresh results resume it
     db.add(JobEvent(job_id=job.id, message="Retry requested; resuming from last checkpoint", stage="retry"))
+    if job.parent_id is None and job.project_id is not None:
+        project = db.get(Project, job.project_id)
+        if project is not None and project.status in ("failed", "cancelled"):
+            project.status, project.status_label = "running", "Retrying"
     # Failed/cancelled children are re-run too; completed children are kept,
     # so a retried workflow never repeats work that already succeeded.
     for child in db.execute(select(Job).where(Job.parent_id == job.id, Job.status.in_(("failed", "cancelled")))).scalars():
@@ -482,4 +492,5 @@ def job_summary(job: Job) -> dict[str, Any]:
         "started_at": job.started_at,
         "finished_at": job.finished_at,
         "waiting": (job.checkpoint or {}).get("waiting"),
+        "detail": (job.checkpoint or {}).get("detail") if job.status == "running" else None,
     }

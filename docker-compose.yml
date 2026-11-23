@@ -35,6 +35,8 @@ x-common-env: &common-env
   CLIPFORGE_PUBLIC_BASE_URL: ${CLIPFORGE_PUBLIC_BASE_URL:-http://localhost:3000}
   CLIPFORGE_COOKIE_SECURE: ${CLIPFORGE_COOKIE_SECURE:-}
   CLIPFORGE_LOG_LEVEL: ${CLIPFORGE_LOG_LEVEL:-INFO}
+  # Local AI for Brain Chat (the optional "ollama" service below; AI Connections → Local AI).
+  CLIPFORGE_OLLAMA_URL: ${CLIPFORGE_OLLAMA_URL:-http://ollama:11434}
   CLIPFORGE_STORAGE_BACKEND: ${CLIPFORGE_STORAGE_BACKEND:-local}
   CLIPFORGE_S3_ENDPOINT_URL: ${CLIPFORGE_S3_ENDPOINT_URL:-}
   CLIPFORGE_S3_BUCKET: ${CLIPFORGE_S3_BUCKET:-}
@@ -165,7 +167,7 @@ services:
       - api
 
   # Optional local language model server: docker compose --profile local-ai up -d
-  # then add it in AI Connections as "Ollama (local)" with URL http://ollama:11434/v1
+  # then open AI Connections → Local AI: it is found by itself; download a model there (with progress).
   ollama:
     image: ollama/ollama:${OLLAMA_VERSION:-latest}
     profiles: ["local-ai"]

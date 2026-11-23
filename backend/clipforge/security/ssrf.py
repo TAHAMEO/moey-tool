@@ -16,6 +16,7 @@ import hashlib
 import ipaddress
 import socket
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -182,8 +183,11 @@ def safe_download(
     allow_private_hosts: list[str] | None = None,
     extra_headers: dict[str, str] | None = None,
     allowed_redirect_hosts: set[str] | None = None,
+    on_progress: Callable[[int, int | None], None] | None = None,
 ) -> FetchResult:
-    """Download ``url`` to ``dest`` under SSRF, size, time and type limits."""
+    """Download ``url`` to ``dest`` under SSRF, size, time and type limits.
+
+    ``on_progress(bytes_done, bytes_total_or_None)`` is called about twice a second."""
     settings = get_settings()
     max_bytes = max_bytes or settings.max_download_mb * 1024 * 1024
     deadline = time.monotonic() + timeout_s
@@ -226,6 +230,8 @@ def safe_download(
 
                 digest = hashlib.sha256()
                 size = 0
+                total = int(declared) if declared and declared.isdigit() else None
+                reported = 0.0
                 with open(tmp, "wb") as handle:
                     for chunk in response.iter_bytes(1024 * 1024):
                         size += len(chunk)
@@ -235,6 +241,11 @@ def safe_download(
                             raise FetchError("timeout", "Download took too long")
                         digest.update(chunk)
                         handle.write(chunk)
+                        if on_progress is not None and time.monotonic() - reported >= 0.5:
+                            reported = time.monotonic()
+                            on_progress(size, total)
+                if on_progress is not None:
+                    on_progress(size, total or size)
                 tmp.replace(dest)
                 return FetchResult(dest, size, content_type, target.url, digest.hexdigest(), redirects)
 

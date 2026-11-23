@@ -17,6 +17,18 @@ export type JobSummary = {
     type?: string; label?: string; packages?: ApprovalPackage[]; schedule?: RequestedSchedule | null;
     rights?: "third_party_download" | null; flags?: { package_id: string; reason: string }[];
   } | null;
+  /** Live figures of a running step (a download: bytes, speed in bytes/s, seconds left, file n of m). */
+  detail?: JobLiveDetail | null;
+  /** What a waiting workflow is doing now: the steps it waits for and their combined progress. */
+  step?: JobStep | null;
+};
+
+export type JobLiveDetail = {
+  downloaded?: number; total?: number | null; speed?: number | null; eta?: number | null; part?: number; parts?: number;
+};
+
+export type JobStep = {
+  label: string; progress: number; done: number; total: number; status: string; detail: JobLiveDetail | null;
 };
 
 /** A publish time asked for in chat ("…and post them tomorrow at 6pm"). */
@@ -380,4 +392,23 @@ export type BatchSummary = {
 export type FolderListing = {
   root: string; path: string; exists: boolean; writable: boolean; videos: number;
   folders: { name: string; path: string; videos: number }[]; watched: WatchFolderInfo[];
+};
+
+/** Local AI on this PC (AI Connections → Local AI). */
+export type LocalAIServer = {
+  kind: "ollama" | "lmstudio" | "jan" | "llamacpp";
+  label: string;
+  url: string;
+  running: boolean;
+  version: string | null;
+  models: { name: string; size: number | null; family: string | null; parameters: string | null }[];
+  connection: { id: string; enabled: boolean; status: string; models: string[] } | null;
+};
+
+export type LocalAIStatus = {
+  servers: LocalAIServer[];
+  recommended: { name: string; label: string; download_gb: number; memory_gb: number; note: string }[];
+  install_url: string;
+  chat_ready: boolean;
+  pulling: (JobSummary & { model: string }) | null;
 };

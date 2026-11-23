@@ -8,7 +8,7 @@ Ubuntu 24.04 with systemd. Both run the same code.
 | | Minimum | Recommended |
 |---|---|---|
 | CPU | 4 cores (x86-64) | 8 cores; an NVIDIA GPU only if you add WhisperX or local LLMs |
-| Memory | 8 GB | 16 GB (each media worker keeps ~5.5 GB once the speech model is loaded) |
+| Memory | 8 GB | 16 GB (a media worker uses ~5.5 GB while the speech model transcribes; it is freed afterwards) |
 | Disk | 30 GB + your media | SSD; long sources need ~2× their size while processing |
 | OS | Linux with Docker Engine 24+ and Compose v2 | Ubuntu 24.04 LTS |
 

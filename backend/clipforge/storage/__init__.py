@@ -157,6 +157,16 @@ def get_storage():
         return _storage
 
 
+def asset_present(asset) -> bool:
+    """A media asset whose file is still stored (storage clean-up removes old source files)."""
+    if asset is None or (asset.info or {}).get("deleted"):
+        return False
+    try:
+        return get_storage().exists(asset.storage_key)
+    except (StorageError, OSError):
+        return False
+
+
 def reset_storage() -> None:
     global _storage
     with _lock:

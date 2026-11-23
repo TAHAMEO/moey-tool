@@ -164,6 +164,37 @@ jobs:
           "storage: $store"
           if ($store.Trim() -ne "10 True") { $problems += "media storage refuses Windows paths: $store" }
 
+          # Uploading a video from this PC through the web app, the way the browser does it: in pieces
+          # (one request is cut off at 10 MB by the web server), then made into an upload for the Brain.
+          $video = Join-Path $env:RUNNER_TEMP "upload-test.mp4"
+          $ErrorActionPreference = "Continue"   # a warning on stderr must not stop the check
+          & $py -c "import subprocess,sys; from pathlib import Path; from clipforge import desktop; ff=str(Path(desktop._ffmpeg_dir())/'ffmpeg.exe'); subprocess.run([ff,'-v','error','-y','-f','lavfi','-i','testsrc2=size=1280x720:rate=30:duration=60','-f','lavfi','-i','sine=frequency=220:duration=60','-c:v','libx264','-preset','ultrafast','-b:v','4M','-c:a','aac','-shortest',sys.argv[1]],check=True)" $video 2>&1 | Out-String | Write-Host
+          $ErrorActionPreference = "Stop"
+          $bytes = [IO.File]::ReadAllBytes($video)
+          $headers = @{ "x-csrf-token" = $me.csrf_token }
+          try {
+            $start = Invoke-RestMethod -UseBasicParsing -WebSession $session -Method Post -Headers $headers -ContentType "application/json" `
+              -Body (@{ filename = "upload test.mp4"; size = $bytes.Length; mime = "video/mp4" } | ConvertTo-Json) "http://127.0.0.1:3000/api/uploads"
+            $offset = 0
+            while ($offset -lt $bytes.Length) {
+              $length = [Math]::Min([int]$start.chunk_size, $bytes.Length - $offset)
+              $piece = New-Object byte[] $length
+              [Array]::Copy($bytes, $offset, $piece, 0, $length)
+              $sent = Invoke-RestMethod -UseBasicParsing -WebSession $session -Method Put -Headers $headers -ContentType "application/octet-stream" `
+                -Body $piece "http://127.0.0.1:3000/api/uploads/$($start.upload_id)?offset=$offset"
+              $offset = [long]$sent.received
+            }
+            $uploaded = Invoke-RestMethod -UseBasicParsing -WebSession $session -Method Post -Headers $headers -ContentType "application/json" `
+              -Body (@{ upload_id = $start.upload_id } | ConvertTo-Json) "http://127.0.0.1:3000/api/chat/upload/complete"
+            "upload: $($bytes.Length) bytes in pieces of $($start.chunk_size) -> asset $($uploaded.asset_id), size $($uploaded.size)"
+            if ([long]$uploaded.size -ne $bytes.Length) { $problems += "the uploaded video arrived with the wrong size ($($uploaded.size) of $($bytes.Length))" }
+          } catch {
+            $problems += "uploading a $([int]($bytes.Length / 1MB)) MB video through the web app failed: $_"
+          }
+          $local = Invoke-RestMethod -UseBasicParsing -WebSession $session "http://127.0.0.1:3000/api/providers/local"
+          "local AI: $(($local.servers | ForEach-Object { "$($_.label)=$($_.running)" }) -join ', ')"
+          if ($null -eq $local.recommended) { $problems += "the Local AI page's API doesn't answer" }
+
           # A real render with the FFmpeg the app ships (source -> mezzanine -> 9:16 clip with captions).
           $ErrorActionPreference = "Continue"   # the face tracker logs to stderr; only the exit code counts
           $render = & $py (Join-Path $env:GITHUB_WORKSPACE "repo\installer\windows\tests\render_check.py") 2>&1 | Out-String

@@ -1,20 +1,25 @@
 "use client";
 
 import clsx from "clsx";
-import { ArrowUp, Film, Link2, MessageSquarePlus, Paperclip, PlayCircle, Radio, Sparkles, X } from "lucide-react";
+import { ArrowUp, Film, Link2, MessageSquarePlus, Paperclip, PlayCircle, Radio, Scissors, Sparkles, Wand2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageView } from "@/components/chat/MessageView";
 import { browserZone } from "@/components/schedule";
 import { useToast } from "@/components/toast";
 import { Button, ProgressBar, Spinner } from "@/components/ui";
-import { api, platformName, timeAgo, uploadWithProgress } from "@/lib/api";
+import { api, formatBytes, platformName, timeAgo, uploadMedia } from "@/lib/api";
 import type { Conversation, Message } from "@/lib/types";
+
+// Extensions too: Windows doesn't map every video type (.mkv, for one) to video/*, so the picker would hide them.
+const MEDIA_ACCEPT = "video/*,audio/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mp3,.m4a,.wav,.aac,.flac,.ogg";
 
 const SUGGESTIONS = [
   { icon: PlayCircle, text: "Create 5 Shorts from this YouTube video: " },
   { icon: Film, text: "Process this Instagram Reel: " },
   { icon: Radio, text: "Watch this livestream and create clips: " },
   { icon: Sparkles, text: "What have you learned about my best clips?" },
+  { icon: Wand2, text: "How can I improve my latest clips?" },
+  { icon: Scissors, text: "Make clip 1 3 seconds shorter and use karaoke captions" },
 ];
 
 function detectLinks(text: string): { platform: string; url: string }[] {
@@ -36,7 +41,8 @@ export default function BrainChatPage() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [upload, setUpload] = useState<{ name: string; progress: number; assetId?: string } | null>(null);
+  const [upload, setUpload] = useState<{ name: string; size: number; progress: number; assetId?: string } | null>(null);
+  const uploadAbort = useRef<AbortController | null>(null);
   const [showList, setShowList] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -115,18 +121,30 @@ export default function BrainChatPage() {
   }
 
   async function onFile(file: File) {
-    setUpload({ name: file.name, progress: 0 });
-    const form = new FormData();
-    form.append("file", file);
+    uploadAbort.current?.abort();
+    const controller = new AbortController();
+    uploadAbort.current = controller;
+    setUpload({ name: file.name, size: file.size, progress: 0 });
     try {
-      const result = await uploadWithProgress<{ asset_id: string }>("/chat/upload", form, (p) =>
-        setUpload((u) => (u ? { ...u, progress: p } : u)));
-      setUpload({ name: file.name, progress: 1, assetId: result.asset_id });
+      // Sent in pieces of a few MB: a single big request is cut off at 10 MB by the Windows app's web server.
+      const result = await uploadMedia(file, (p) => setUpload((u) => (u && !u.assetId ? { ...u, progress: p } : u)),
+        controller.signal);
+      if (controller.signal.aborted) return;
+      setUpload({ name: file.name, size: file.size, progress: 1, assetId: result.asset_id });
       if (!text.trim()) setText("Create the best Shorts from this upload");
     } catch (err) {
+      if (controller.signal.aborted) return;
       setUpload(null);
       toast("error", err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      if (uploadAbort.current === controller) uploadAbort.current = null;
     }
+  }
+
+  function removeUpload() {
+    uploadAbort.current?.abort();
+    uploadAbort.current = null;
+    setUpload(null);
   }
 
   const empty = !loadingMessages && messages.length === 0;
@@ -205,8 +223,19 @@ export default function BrainChatPage() {
                 {upload && (
                   <span className="inline-flex min-w-40 items-center gap-2 rounded-full bg-surface-2 px-2.5 py-1 text-[12px]">
                     <Paperclip className="size-3" /> <span className="max-w-40 truncate">{upload.name}</span>
-                    {upload.assetId ? null : <span className="w-16"><ProgressBar value={upload.progress} /></span>}
-                    <button type="button" aria-label="Remove file" onClick={() => setUpload(null)}><X className="size-3" /></button>
+                    {upload.assetId ? (
+                      <span className="text-faint">{formatBytes(upload.size)}</span>
+                    ) : (
+                      <>
+                        <span className="w-16"><ProgressBar value={upload.progress} /></span>
+                        <span className="tabular-nums text-muted" aria-live="polite">
+                          {Math.floor(upload.progress * 100)}% · {formatBytes(upload.size * upload.progress)} of {formatBytes(upload.size)}
+                        </span>
+                      </>
+                    )}
+                    <button type="button" aria-label={upload.assetId ? "Remove file" : "Cancel upload"} onClick={removeUpload}>
+                      <X className="size-3" />
+                    </button>
                   </span>
                 )}
               </div>
@@ -216,11 +245,11 @@ export default function BrainChatPage() {
                 className="rounded-xl p-2 text-muted hover:bg-surface-2 hover:text-text">
                 <Paperclip className="size-[18px]" />
               </button>
-              <input ref={fileRef} type="file" hidden accept="video/*,audio/*"
+              <input ref={fileRef} type="file" hidden accept={MEDIA_ACCEPT}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
               <textarea ref={inputRef} rows={1} value={text} onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                placeholder="Paste a YouTube or Instagram link and tell me what to make…"
+                placeholder="Paste a link, attach a video, or ask me to change your clips…"
                 aria-label="Message the Brain"
                 className="max-h-[200px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[14px] text-text placeholder:text-faint focus:outline-none" />
               <Button type="submit" size="sm" className="size-9 rounded-xl px-0" aria-label="Send"

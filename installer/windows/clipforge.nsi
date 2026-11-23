@@ -11,7 +11,7 @@ SetCompressor /SOLID lzma
 ManifestDPIAware true
 
 !ifndef VERSION
-  !define VERSION "0.3.5"
+  !define VERSION "0.4.0"
 !endif
 !ifndef PAYLOAD
   !define PAYLOAD "build\payload"
@@ -53,7 +53,7 @@ VIAddVersionKey "LegalCopyright" "CLIPFORGE"
 !define MUI_UNICON "clipforge.ico"
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Install ${APP}"
-!define MUI_WELCOMEPAGE_TEXT "${APP} turns your long videos into Shorts and Reels and publishes them.$\r$\n$\r$\n${APP} runs as an ordinary Windows app — no Docker, no Linux, no administrator rights. Setup downloads what it needs (Python, its database and video tools: about 1.2 GB, plus the 1.8 GB speech model) and takes about 10–30 minutes, depending on your connection.$\r$\n$\r$\nKeep the PC on and connected while setup runs."
+!define MUI_WELCOMEPAGE_TEXT "${APP} turns your long videos into Shorts and Reels and publishes them.$\r$\n$\r$\n${APP} runs as an ordinary Windows app — no Docker, no Linux, no administrator rights. Setup downloads what it needs (Python, its database and video tools: about 1.2 GB, plus the 480 MB speech model) and takes about 10–20 minutes, depending on your connection.$\r$\n$\r$\nKeep the PC on and connected while setup runs."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open ${APP} now"
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenClipForge
@@ -191,7 +191,7 @@ Section "CLIPFORGE" SecMain
   ${EndIf}
   !insertmacro Step "runtime" "Step 3 of 6: downloading Python and ${APP}'s components (about 1.2 GB, 5–15 minutes)"
   !insertmacro Step "setup" "Step 4 of 6: creating ${APP}'s database"
-  !insertmacro Step "models" "Step 5 of 6: downloading the AI models (1.8 GB speech model, with progress)"
+  !insertmacro Step "models" "Step 5 of 6: downloading the AI models (480 MB speech model, with progress)"
 
   ${If} $Failed == "1"
     Goto failed  ; no shortcuts to something that isn't installed yet

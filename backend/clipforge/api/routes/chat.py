@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 import tempfile
 import uuid
@@ -19,7 +18,7 @@ from ...config import get_settings
 from ...db.base import get_db
 from ...db.models import Conversation, MediaAsset, Message
 from ...security.audit import audit
-from ...storage import get_storage, looks_like_media
+from ...storage import get_storage, looks_like_media, sha256_file
 from ..deps import Principal, client_ip, editor, viewer
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -110,18 +109,19 @@ def send_message(conversation_id: uuid.UUID, body: NewMessage, db: Session = Dep
 @router.post("/upload")
 def upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db),
            principal: Principal = Depends(editor)) -> dict:
-    """Optional fallback input: upload a media file you have rights to.
+    """Optional fallback input: upload a media file you have rights to, in one request.
+
+    The web app sends files in pieces instead (``/uploads`` then ``/chat/upload/complete``): the
+    Windows app's web server keeps only the first 10 MB of a forwarded request. This one-request
+    form stays for scripts and small files.
 
     A plain (sync) endpoint on purpose: FastAPI runs it in its threadpool, so
     copying a multi-gigabyte file never blocks the event loop.
     """
     settings = get_settings()
     name = Path(file.filename or "upload").name[:200]
-    ext = Path(name).suffix.lower()
-    if ext not in ALLOWED_UPLOAD_EXT:
-        raise HTTPException(400, {"code": "type", "message": "Upload a video or audio file (mp4, mov, webm, mkv, mp3, wav, m4a…)."})
+    ext = _check_ext(name)
     limit = settings.max_upload_mb * 1024 * 1024
-    digest = hashlib.sha256()
     size = 0
     tmp_dir = Path(tempfile.mkdtemp(dir=settings.work_dir, prefix="upload-"))
     tmp = tmp_dir / f"incoming{ext}"
@@ -131,22 +131,59 @@ def upload(request: Request, file: UploadFile = File(...), db: Session = Depends
                 size += len(chunk)
                 if size > limit:
                     raise HTTPException(413, {"code": "too_large", "message": f"Files up to {settings.max_upload_mb} MB are accepted."})
-                digest.update(chunk)
                 handle.write(chunk)
-        if size == 0 or not looks_like_media(tmp):
-            raise HTTPException(400, {"code": "not_media", "message": "That file doesn't look like a video or audio file."})
-    except HTTPException:
+        return _store_upload(db, request, principal, tmp, name, file.content_type)
+    finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
-    sha = digest.hexdigest()
+
+
+class CompleteUpload(BaseModel):
+    upload_id: str = Field(..., min_length=32, max_length=32)
+
+
+@router.post("/upload/complete")
+def complete_upload(body: CompleteUpload, request: Request, db: Session = Depends(get_db),
+                    principal: Principal = Depends(editor)) -> dict:
+    """Turn an upload sent in pieces (``/uploads``) into a video or audio file for the Brain."""
+    from ...services import chunked_uploads as cu
+    from .uploads import http_error
+
+    try:
+        session, data = cu.take(body.upload_id, str(principal.id))
+    except cu.UploadError as exc:
+        raise http_error(exc) from exc
+    try:
+        _check_ext(session.filename)
+        return _store_upload(db, request, principal, data, session.filename, session.mime)
+    finally:
+        shutil.rmtree(data.parent, ignore_errors=True)
+
+
+def _check_ext(name: str) -> str:
+    ext = Path(name).suffix.lower()
+    if ext not in ALLOWED_UPLOAD_EXT:
+        raise HTTPException(400, {"code": "type", "message": "Upload a video or audio file (mp4, mov, webm, mkv, mp3, wav, m4a…)."})
+    return ext
+
+
+def _store_upload(db: Session, request: Request, principal: Principal, path: Path, name: str, mime: str | None) -> dict:
+    """Check a received file, keep it once (by content) and record it as an upload."""
+    ext = _check_ext(name)
+    size = path.stat().st_size
+    if size == 0 or not looks_like_media(path):
+        raise HTTPException(400, {"code": "not_media", "message": "That file doesn't look like a video or audio file."})
+    sha = sha256_file(path)
     existing = db.execute(select(MediaAsset).where(MediaAsset.sha256 == sha, MediaAsset.kind == "upload")).scalars().first()
-    if existing is not None:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return {"asset_id": str(existing.id), "filename": existing.info.get("filename"), "size": existing.size_bytes, "duplicate": True}
+    if existing is not None and not (existing.info or {}).get("deleted") and get_storage().exists(existing.storage_key):
+        return {"asset_id": str(existing.id), "filename": existing.info.get("filename"), "size": existing.size_bytes,
+                "duplicate": True}
     key = f"uploads/{sha[:2]}/{sha}{ext}"
-    stored = get_storage().put_file(tmp, key, move=True)
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    asset = MediaAsset(kind="upload", storage_key=key, mime=file.content_type or "application/octet-stream",
+    stored = get_storage().put_file(path, key, move=True)
+    if existing is not None:  # the same file again after its stored copy expired: store it anew
+        existing.storage_key, existing.size_bytes = key, stored
+        existing.info = {**{k: v for k, v in (existing.info or {}).items() if k != "deleted"}, "filename": name}
+        return {"asset_id": str(existing.id), "filename": name, "size": stored, "duplicate": False}
+    asset = MediaAsset(kind="upload", storage_key=key, mime=mime or "application/octet-stream",
                        size_bytes=stored, sha256=sha, info={"filename": name, "validated": False})
     db.add(asset)
     db.flush()

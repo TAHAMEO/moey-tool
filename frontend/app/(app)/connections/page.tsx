@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import { Bot, ChevronDown, Cpu, KeyRound, Plus, RefreshCw, Trash2, Wallet } from "lucide-react";
 import { useState } from "react";
+import { LocalAICard } from "@/components/LocalAICard";
 import { Badge } from "@/components/status";
 import { useToast } from "@/components/toast";
 import { Button, Card, EmptyState, Input, Label, Modal, PageHeader, ProgressBar, SectionHeader, Select, Skeleton, Stat, Toggle } from "@/components/ui";
@@ -58,6 +59,8 @@ export default function ConnectionsPage() {
             hint={`answers reused this month${usage.failed_calls_month ? ` · ${usage.failed_calls_month} failed calls` : ""}`} />
         </div>
       )}
+
+      <LocalAICard onChanged={reload} />
 
       <SectionHeader title="Your connections" description="Keys are encrypted on the server and never shown again — only the last four characters." />
       {loading && <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>}

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from ..db.models import MediaAsset, SocialAccount, Source, Transcript
 from ..platforms import drive, google, instagram, youtube
 from ..platforms.http import PlatformError
 from ..security import ssrf
-from ..storage import get_storage, sha256_file
+from ..storage import asset_present, get_storage, sha256_file
 from . import resolver as r
 
 log = logging.getLogger(__name__)
@@ -37,8 +38,12 @@ class AcquisitionError(RuntimeError):
 
 def _store_source_media(db: Session, source: Source, path: Path, *, sha: str, mime: str, origin: dict) -> MediaAsset:
     existing = db.execute(select(MediaAsset).where(MediaAsset.sha256 == sha, MediaAsset.kind.in_(("source", "upload")))).scalars().first()
-    if existing is not None:
+    if existing is not None and asset_present(existing):
         path.unlink(missing_ok=True)
+        asset = existing
+    elif existing is not None:  # same file, but its stored copy was cleaned up: store it again
+        existing.size_bytes = get_storage().put_file(path, existing.storage_key, move=True)
+        existing.info = {k: v for k, v in (existing.info or {}).items() if k not in ("deleted", "deleted_at")}
         asset = existing
     else:
         key = f"sources/{source.id}/original{path.suffix or '.bin'}"
@@ -67,8 +72,34 @@ def _fresh_instagram_url(db: Session, media_id: str) -> str:
     return url
 
 
-def acquire(db: Session, source: Source, access: dict) -> dict:
-    """Returns {'media_asset_id'|'transcript_id': ..., 'method': ...}."""
+class TransferMeter:
+    """Speed and time left of a download, for the progress display."""
+
+    def __init__(self) -> None:
+        self.started = time.monotonic()
+
+    def detail(self, done: int, total: int | None) -> dict:
+        elapsed = max(time.monotonic() - self.started, 0.001)
+        speed = done / elapsed
+        eta = int((total - done) / speed) if total and speed > 0 and total >= done else None
+        return {"downloaded": int(done), "total": int(total) if total else None, "speed": round(speed), "eta": eta,
+                "part": 1, "parts": 1}
+
+
+#: Downloads end when they stall (30 s without data), not after a fixed time: a 4 GB file on a
+#: slow line takes hours.
+DOWNLOAD_LIMIT_S = 12 * 3600
+
+
+def acquire(db: Session, source: Source, access: dict, on_progress=None) -> dict:
+    """Returns {'media_asset_id'|'transcript_id': ..., 'method': ...}.
+
+    ``on_progress(fraction, detail)`` reports a download's progress (bytes, speed, time left)."""
+    meter = TransferMeter()
+
+    def progress(done: int, total: int | None) -> None:
+        if on_progress is not None:
+            on_progress(min(1.0, done / total) if total else 0.0, meter.detail(done, total))
     method = access.get("method")
     params = access.get("acquire") or {}
     settings = get_settings()
@@ -80,6 +111,9 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
         asset = db.get(MediaAsset, uuid.UUID(params["asset_id"]))
         if asset is None:
             raise AcquisitionError("The uploaded file is missing.")
+        if not asset_present(asset):
+            raise AcquisitionError("The uploaded file was removed by storage clean-up (Settings → Data keeps source "
+                                   "videos for a set number of days). Upload it again.", state=r.SOURCE_UNAVAILABLE)
         source.media_asset_id = asset.id
         source.content_sha256 = asset.sha256
         source.media_status = "available"
@@ -88,7 +122,8 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
     if method == "direct_url":
         dest = tmp_dir / ("download" + (Path(params["url"].split("?")[0]).suffix[:6] or ".bin"))
         try:
-            result = ssrf.safe_download(params["url"], dest, max_bytes=max_bytes)
+            result = ssrf.safe_download(params["url"], dest, max_bytes=max_bytes, timeout_s=DOWNLOAD_LIMIT_S,
+                                        on_progress=progress)
         except ssrf.UnsafeURLError as exc:
             raise AcquisitionError(f"Link blocked for safety: {exc}", state=r.ACCESS_DENIED) from exc
         except ssrf.FetchError as exc:
@@ -131,7 +166,8 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
         url = params["media_url"]
         for attempt in (1, 2):
             try:
-                result = ssrf.safe_download(url, dest, max_bytes=max_bytes, allowed_redirect_hosts=None)
+                result = ssrf.safe_download(url, dest, max_bytes=max_bytes, allowed_redirect_hosts=None,
+                                            timeout_s=DOWNLOAD_LIMIT_S, on_progress=progress)
                 break
             except ssrf.UnsafeURLError as exc:
                 raise AcquisitionError(f"Instagram media link refused: {exc}", state=r.ACCESS_DENIED) from exc
@@ -166,7 +202,7 @@ def acquire(db: Session, source: Source, access: dict) -> dict:
         words = parse_srt(text)
         key = f"transcripts/{source.id}/youtube_captions.json"
         tmp = tmp_dir / "captions.json"
-        tmp.write_text(json.dumps({"words": words}))
+        tmp.write_text(json.dumps({"words": words}), encoding="utf-8")
         get_storage().put_file(tmp, key, move=True)
         transcript = Transcript(source_id=source.id, origin="platform_captions", engine="youtube_captions",
                                 model=params.get("language") or "", language=params.get("language"), status="completed",

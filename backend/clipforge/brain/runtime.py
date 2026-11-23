@@ -102,11 +102,35 @@ def await_children(config: dict[str, Any], wait_group: str, children: list[Child
         for spec in children:
             queue.ensure_child(db, ctx.job_id, spec.key, spec.job_type, spec.payload, queue=spec.queue,
                                wait_group=wait_group, max_attempts=spec.max_attempts, status_label=spec.label)
-    value = interrupt({"type": "children", "wait_group": wait_group, "label": label,
-                       "children": [c.key for c in children]})
+    request = {"type": "children", "wait_group": wait_group, "label": label, "children": [c.key for c in children]}
+    value = interrupt(request)
+    # LangGraph replays the value a node was resumed with whenever the node runs again. After a
+    # Retry the failed steps run again, so a replayed outcome that no longer matches the steps'
+    # real state is stale: wait again (a new interrupt) for the fresh results. Bounded: each
+    # stale value was stored once, and the next interrupt either has a new value or suspends.
+    while not _outcomes_current(ctx.job_id, (value or {}).get("children", {}), [c.key for c in children]):
+        value = interrupt(request)
     outcomes = (value or {}).get("children", {})
     return {key: ChildOutcome(**{k: v for k, v in data.items() if k in ("status", "result", "error", "job_id")})
             for key, data in outcomes.items()}
+
+
+def _outcomes_current(parent_id, outcomes: dict[str, dict], keys: list[str]) -> bool:
+    """True when every child's recorded outcome is still its real (finished) state."""
+    from sqlalchemy import select
+
+    from ..db.models import Job
+
+    with session_scope() as db:
+        rows = db.execute(select(Job.payload, Job.status).where(Job.parent_id == parent_id)).all()
+    current = {payload.get("child_key"): status for payload, status in rows}
+    for key in keys:
+        status = current.get(key)
+        if status is None:
+            continue  # no such child row (should not happen): trust the outcome
+        if status not in queue.TERMINAL or (outcomes.get(key) or {}).get("status") != status:
+            return False
+    return True
 
 
 def await_approval(payload: dict[str, Any], *, label: str = "Waiting for your approval") -> Any:

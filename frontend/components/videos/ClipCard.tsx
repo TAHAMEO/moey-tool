@@ -49,7 +49,7 @@ export function ClipCard({ clip, onChanged, technical = false }: { clip: Clip; o
           ) : (
             <div className="flex aspect-[9/16] items-center justify-center p-6 text-center text-[13px] text-white/60">
               {clip.status === "candidate" ? "Moment identified from the transcript — no media was available to render it."
-                : expired ? "The files of this clip were removed by storage clean-up. Use Adjust → Re-render to recreate them."
+                : expired ? "The files of this clip were removed by storage clean-up. Use Adjust → Re-render to recreate them (possible while its source video is still kept, see Settings → Data)."
                 : "Rendering…"}
             </div>
           )}

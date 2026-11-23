@@ -34,7 +34,7 @@ from ..ingestion import acquire as acq
 from ..jobs.registry import JobContext, PermanentError, RetryableError, handler
 from ..media import analysis, ffmpeg_tools, render, subtitles, thumbnails, transcription
 from ..services import app_settings
-from ..storage import get_storage
+from ..storage import asset_present, get_storage
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,9 @@ def acquire_job(ctx: JobContext) -> dict:
     with session_scope() as db:
         source = db.get(Source, uuid.UUID(ctx.payload["source_id"]))
         try:
-            result = acq.acquire(db, source, ctx.payload["access"])
+            result = acq.acquire(db, source, ctx.payload["access"],
+                                 on_progress=lambda f, detail: ctx.progress(0.1 + 0.85 * f, label="Downloading video",
+                                                                            detail=detail))
         except acq.AcquisitionError as exc:
             if exc.retryable:
                 raise RetryableError(str(exc)) from exc
@@ -86,7 +88,8 @@ def download_job(ctx: JobContext) -> dict:
     url = ctx.payload["url"]
     with session_scope() as db:
         source = db.get(Source, source_id)
-        if source.media_asset_id and source.media_status == "available":
+        if source.media_asset_id and source.media_status == "available" and \
+                asset_present(db.get(MediaAsset, source.media_asset_id)):
             ctx.event("Reusing the video downloaded earlier", stage="acquire")
             return {"media_asset_id": str(source.media_asset_id), "method": "public_download", "reused": True}
     settings = get_settings()
@@ -97,7 +100,8 @@ def download_job(ctx: JobContext) -> dict:
         result = public_download.download(
             url, work, max_bytes=settings.max_download_mb * 1024 * 1024,
             max_seconds=settings.max_source_duration_hours * 3600, cache_dir=settings.data_dir / "cache" / "yt-dlp",
-            on_progress=lambda f, _label: ctx.progress(0.02 + 0.93 * f, label="Downloading video"),
+            on_progress=lambda f, _label, detail=None: ctx.progress(0.02 + 0.93 * f, label="Downloading video",
+                                                                    detail=detail),
             cancelled=ctx.cancelled)
     except public_download.DownloadError as exc:
         shutil.rmtree(work, ignore_errors=True)
@@ -129,7 +133,8 @@ def prepare_job(ctx: JobContext) -> dict:
     with session_scope() as db:
         source = db.get(Source, source_id)
         existing = {a.kind: a for a in db.execute(select(MediaAsset).where(
-            MediaAsset.source_id == source_id, MediaAsset.kind.in_(("mezzanine", "proxy", "asr_audio")))).scalars()}
+            MediaAsset.source_id == source_id, MediaAsset.kind.in_(("mezzanine", "proxy", "asr_audio")))).scalars()
+            if asset_present(a)}  # files removed by storage clean-up are made again
         if "mezzanine" in existing and "asr_audio" in existing:
             mez = existing["mezzanine"]
             ctx.event("Reusing prepared media from an earlier run", stage="prepare")
@@ -137,6 +142,10 @@ def prepare_job(ctx: JobContext) -> dict:
                     "asr": existing["asr_audio"].storage_key, "duration": mez.duration_s, "has_video": bool(mez.width),
                     "has_audio": True, "width": mez.width, "height": mez.height, "reused": True}
         original = db.get(MediaAsset, source.media_asset_id)
+        if not asset_present(original):
+            raise PermanentError("The original video was removed by storage clean-up (Settings → Data keeps source "
+                                 "videos for a set number of days). Upload it or paste its link again.",
+                                 code="source_removed", label="Source unavailable")
         original_key = original.storage_key
         original_id = original.id
     ctx.progress(0.05, label="Checking media", stage="prepare")
@@ -168,6 +177,11 @@ def prepare_job(ctx: JobContext) -> dict:
     _commit(asr_key, asr_path)
     profile = analysis.audio_profile(asr_path)
     with session_scope() as db:
+        # Made again after a clean-up: the old rows (files gone) are replaced, so exactly one of each remains.
+        for stale in db.execute(select(MediaAsset).where(MediaAsset.source_id == source_id,
+                                                         MediaAsset.kind.in_(("mezzanine", "proxy", "asr_audio")))).scalars():
+            db.delete(stale)
+        db.flush()
         _asset(db, kind="mezzanine", key=mez_key, source_id=source_id, mime="video/mp4" if mez_info.has_video else "audio/mp4",
                path=mez_path, duration_s=mez_info.duration_s, width=mez_info.width, height=mez_info.height,
                info={"probe": mez_info.to_dict(), "original_probe": info.to_dict()})
@@ -175,7 +189,8 @@ def prepare_job(ctx: JobContext) -> dict:
             _asset(db, kind="proxy", key=proxy_key, source_id=source_id, mime="video/mp4", path=_local(proxy_key))
         _asset(db, kind="asr_audio", key=asr_key, source_id=source_id, mime="audio/wav", path=asr_path,
                duration_s=mez_info.duration_s)
-        db.add(Analysis(source_id=source_id, kind="audio_profile", version="1", data=profile))
+        if not db.execute(select(Analysis.id).where(Analysis.source_id == source_id, Analysis.kind == "audio_profile")).first():
+            db.add(Analysis(source_id=source_id, kind="audio_profile", version="1", data=profile))
         original = db.get(MediaAsset, original_id)
         original.info = {**(original.info or {}), "validated": True, "probe": info.to_dict()}
         original.duration_s = info.duration_s
@@ -199,8 +214,42 @@ def transcribe_job(ctx: JobContext) -> dict:
     try:
         engine = transcription.select_engine(language)
     except transcription.TranscriptionUnavailable as exc:
-        raise PermanentError(f"No speech-recognition engine is available: {exc}. Install a model (see docs/INSTALL.md).",
-                             code="no_asr_engine") from exc
+        engine = _download_speech_model(ctx, language, exc)
+    try:
+        return _transcribe(ctx, source_id, language, engine)
+    finally:
+        transcription.release_models()  # free the model's memory for rendering in this worker
+
+
+def _download_speech_model(ctx: JobContext, language: str, missing: Exception):
+    """No speech model yet (setup could not download one): fetch faster-whisper once, with progress."""
+    from ..media import models
+
+    settings = get_settings()
+    if not settings.auto_download_speech_model:
+        raise PermanentError(f"No speech-recognition engine is available: {missing}. Install a model "
+                             "(see docs/INSTALL.md).", code="no_asr_engine")
+    size = settings.faster_whisper_model
+    ctx.progress(0.0, label="Downloading the speech model", stage="transcribe",
+                 message=f"No speech model is installed yet: downloading faster-whisper {size} (one time)")
+
+    def report(done: int, total: int) -> None:
+        if total:
+            ctx.progress(min(0.99, done / total), label="Downloading the speech model",
+                         message=f"Speech model: {done >> 20} of {total >> 20} MB (one time)")
+
+    try:
+        models.install_faster_whisper(size, on_progress=report)
+    except models.ModelUnavailable as exc:
+        raise RetryableError(f"No speech model is installed and downloading one failed ({exc}). Check the internet "
+                             "connection and press Retry, or run CLIPFORGE setup again.") from exc
+    try:
+        return transcription.select_engine(language)
+    except transcription.TranscriptionUnavailable as exc:
+        raise PermanentError(f"No speech-recognition engine is available: {exc}.", code="no_asr_engine") from exc
+
+
+def _transcribe(ctx: JobContext, source_id: uuid.UUID, language: str, engine) -> dict:
     asr_key = f"sources/{source_id}/asr.wav"
     wav = _local(asr_key)
     with session_scope() as db:
@@ -251,7 +300,8 @@ def transcribe_job(ctx: JobContext) -> dict:
             deduped = transcription.restore_punctuation(deduped)
         key = f"transcripts/{source_id}/{transcript_id}.json"
         path = _writable(key)
-        path.write_text(json.dumps({"words": deduped, "engine": engine.name, "model": engine.model_label}))
+        path.write_text(json.dumps({"words": deduped, "engine": engine.name, "model": engine.model_label}),
+                        encoding="utf-8")
         _commit(key, path)
         transcript = db.get(Transcript, transcript_id)
         transcript.status = "completed"
@@ -298,8 +348,13 @@ def analyze_job(ctx: JobContext) -> dict:
 # -------------------------------------------------------------------- render
 def _source_paths(source_id: uuid.UUID) -> dict:
     with session_scope() as db:
-        assets = {a.kind: a for a in db.execute(select(MediaAsset).where(MediaAsset.source_id == source_id)).scalars()}
-        mez = assets["mezzanine"]
+        mez = next((a for a in db.execute(select(MediaAsset).where(MediaAsset.source_id == source_id,
+                                                                    MediaAsset.kind == "mezzanine")).scalars()
+                    if asset_present(a)), None)
+        if mez is None:
+            raise PermanentError("This clip's source video is no longer stored (storage clean-up removes source videos "
+                                 "after the number of days set in Settings → Data). Process the video again to "
+                                 "re-render it.", code="source_removed", label="Source removed")
         return {"mezzanine": _local(mez.storage_key), "has_video": bool(mez.width), "duration": mez.duration_s or 0.0}
 
 
@@ -310,7 +365,7 @@ def load_words(source_id: uuid.UUID) -> list[dict]:
         if transcript is None:
             return []
         key = transcript.storage_key
-    return json.loads(_local(key).read_text())["words"]
+    return json.loads(_local(key).read_text(encoding="utf-8"))["words"]
 
 
 def load_analysis(source_id: uuid.UUID) -> dict:
@@ -459,6 +514,7 @@ def render_job(ctx: JobContext) -> dict:
                             "review_words": len(sub_report.review_words)})
         shutil.rmtree(work / slug, ignore_errors=True)
     with session_scope() as db:
+        repoint_packages(db, clip_id)
         clip = db.get(Clip, clip_id)
         clip.status = "rendered"
         if shorts_plan["record"]:
@@ -475,6 +531,37 @@ def render_job(ctx: JobContext) -> dict:
                 clip.transcript_text = spoken or clip.transcript_text
     shutil.rmtree(work, ignore_errors=True)
     return {"renders": results, "hook": (shorts_plan["record"].get("hook") or {}).get("status")}
+
+
+def repoint_packages(db, clip_id: uuid.UUID) -> int:
+    """After a clip is made again (Adjust → Re-render, or a change asked for in Brain Chat), its
+    not-yet-published packages use the new video, subtitles and covers — not the replaced render,
+    which publishing would refuse. Returns how many packages changed."""
+    from ..db.models import OutputPackage
+    from ..publishing import schedule
+
+    renders = {r.aspect: r for r in db.execute(select(Render).where(Render.clip_id == clip_id, Render.status == "done")
+                                               .order_by(Render.created_at)).scalars()}  # the newest per aspect
+    vertical = renders.get("9:16") or next(iter(renders.values()), None)
+    if vertical is None:
+        return 0
+    landscape = next((a for a in db.execute(select(MediaAsset).where(
+        MediaAsset.kind == "thumbnail", MediaAsset.info["clip_id"].astext == str(clip_id))
+        .order_by(MediaAsset.created_at.desc())).scalars() if asset_present(a)), None)
+    changed = 0
+    for package in db.execute(select(OutputPackage).where(OutputPackage.clip_id == clip_id)).scalars():
+        if package.render_id == vertical.id or package.status == "published":
+            continue
+        if schedule.remote_publication(db, package.id) is not None:
+            continue  # already uploaded to YouTube, waiting for its time
+        package.render_id = vertical.id
+        if package.platform == "youtube":
+            package.subtitle_asset_id = vertical.srt_asset_id
+            package.thumbnail_asset_id = landscape.id if landscape else vertical.thumbnail_asset_id
+        else:
+            package.cover_asset_id = vertical.thumbnail_asset_id
+        changed += 1
+    return changed
 
 
 def _ab_applies(cfg) -> bool:
