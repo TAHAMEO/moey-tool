@@ -1,10 +1,11 @@
 # Shorts retention upgrade — plan
 
-Status: **P0, P1 and P2 implemented** — `clipforge/shorts/`, `clipforge/analytics/retention.py`,
+Status: **P0, P1, P2 and P3 implemented** — `clipforge/shorts/`, `clipforge/analytics/retention.py`,
 switches in Settings → Clips & editing (all off until turned on). P0: hook scorer + reconstruction,
 loop seam, review hold. P1: re-hook at 20–25 s, kinetic captions, clip transcript export, packaging
 variants. P2: originality guardrail, early-retention feedback (YouTube retention report + engaged
-views, CSV/manual import, flop flags, style ranking, learned title ranking). P3 not started.
+views, CSV/manual import, flop flags, style ranking, learned title ranking). P3: adaptive length,
+alternate openings for weak clips, A/B tests across clips, cost per clip / per published Short.
 
 Owner's decisions (2026-11-22): weak-hook clips are **held for review** (manual publish still
 possible); **no sentence re-ordering** unless "Open on the question" is switched on; **local AI
@@ -79,6 +80,33 @@ What P2 does:
   viewers" on, P1's title ranking gets at most ±0.1 from that.
 - Limits: the YouTube Analytics API usually has no data for 24–72 h, so the true "first hour" signal
   is views from the Data API plus whatever you import; nothing is deleted or re-edited automatically.
+
+What P3 does:
+- **Adaptive length** (`shorts/length.py`): the clip's kind from its words (list/steps, story, tip,
+  explanation, opinion, general) sets a preferred and a maximum length (tip ≤ 25/40 s, list ≤ 35/55 s,
+  story ≤ 40/58 s …; Instagram's 90 s respected). With early-retention feedback on, the length band
+  that kept your viewers best (3+ posts) nudges the preferred length. It only steers the loop stage's
+  end choice, which shortens only at a real conclusion — never mid-thought; no blend unless "Make
+  clips loop" is on.
+- **Alternate openings** (`shorts/hook.py :: alternates`): for a clip whose opening stays weak, other
+  starting points that score better — a stronger line later in the first 40 % of the clip, or a setup
+  line up to 15 s before it. Order is never changed. Listed on the clip with **Use** (re-renders from
+  there); with "use the best one automatically" on, the best one is applied when it passes the check.
+- **A/B tests** (`shorts/abtest.py`, table `ab_tests`, migration 0006): one at a time — titles (best vs
+  second option), first-frame text (best vs second), text on frame one vs none. New clips alternate
+  between sides (balanced, kept on re-render). Once each side has N clips with early-retention numbers
+  (default 5 — with fewer, a permutation test can't reach p < 0.1), the sides are compared; a winner is
+  named only at p < 0.1, otherwise "no clear difference". Platforms can't show two titles of one Short
+  to different viewers, so this is a test across clips, and it says so.
+- **Cost** (`analytics/costs.py`): from the Model Hub's metered usage (tokens, USD, estimated flag) and
+  job run times. A clip's own jobs count for it; whole-video work is shared equally by its clips.
+  Shown per clip, per project, and per published Short (with cost per 1,000 views when views exist).
+
+Windows render fix (0.3.5): every render on the native Windows app failed with "Cannot select channel
+layout … format_out" — the shipped FFmpeg 6.0 re-initialises the filter graph mid-render and can't
+match loudnorm's open channel layout to the AAC encoder. Reproduced with the same 6.0 build; the output
+audio format is now named explicitly after loudnorm. Windows CI now renders a real clip with the
+shipped FFmpeg, and the backend tests pass with FFmpeg 6.0.
 
 ## 1. The pipeline today (from the code)
 

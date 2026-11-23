@@ -145,10 +145,11 @@ export type Clip = {
   loop_score?: number | null;
   shorts?: ClipShorts;
   transcript_url?: string | null;
+  cost?: ClipCost | null;
 };
 
 export type ClipShorts = {
-  hook?: { status: "ok" | "improved" | "held"; text_hook: string | null; changes: string[];
+  hook?: { status: "ok" | "improved" | "held"; text_hook: string | null; changes: string[]; alternate_used?: { change: string } | null;
            before: { score: number; reasons: string[] }; after: { score: number; reasons: string[]; parts: Record<string, number> } };
   loop?: { end: number; changes: string[]; bridge_s: number; bridged?: boolean; visual_similarity?: number | null;
            assessment: { score: number; loopable: boolean; reasons: string[] } };
@@ -163,6 +164,21 @@ export type ClipShorts = {
                                        switched_to: number | null; matches: { title: string; similarity: number }[] }>;
   analytics?: Record<string, { signals: Record<string, number>; flags: string[]; suggestion: string | null; sources: string[];
                                age_hours: number | null; missing: string[] }>;
+  length_plan?: { content_type: string; prefer_max_s: number; max_s: number; reasons: string[] };
+  alternate_hooks?: { kind: "later" | "earlier"; start: number; end: number; score: number; delta: number; first_line: string; change: string }[];
+  ab?: { test_id: string; dimension: string; arm: "A" | "B"; means: string };
+};
+
+export type ClipCost = { ai_usd: number; ai_calls_own: number; ai_calls_shared: number; processing_s: number; estimated: boolean };
+export type ABTestResult = {
+  id: string; dimension: string; status: "running" | "concluded" | "stopped"; arms: Record<string, string>; min_per_arm: number;
+  started_at: string; ended_at: string | null; metric: string | null; assigned: Record<string, number>; measured: Record<string, number>;
+  mean: Record<string, number | null>; p_value?: number; winner?: string | null; conclusion?: string;
+};
+export type CostReport = {
+  ai_usd: number; processing_s: number; published: number; avg_ai_usd_per_short: number | null;
+  shorts: { publication_id: string; platform: string; title: string; ai_usd: number; processing_s: number; views: number | null;
+            usd_per_1k_views: number | null; estimated: boolean }[];
 };
 
 export type RetentionReport = {
@@ -277,6 +293,8 @@ export type ShortsSettings = {
   originality_gate: boolean; originality_threshold: number; originality_compare_last: number; originality_streak: number;
   retention_loop: boolean; flop_viewed_rate: number; flop_first_3s_retention: number; flop_avg_viewed_pct: number;
   learn_from_retention: boolean;
+  adaptive_length: boolean; alternate_hooks: boolean; alternate_hooks_apply: boolean;
+  ab_test: "off" | "title" | "first_frame" | "hook"; ab_min_per_arm: number;
 };
 export type BrandSettings = { accent_color: string; watermark_library_item_id: string | null; watermark_position: string; channel_name: string };
 export type RetentionSettings = { source_media_days: number; work_files_days: number; live_buffer_minutes: number; keep_renders_days: number };

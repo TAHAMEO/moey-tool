@@ -35,6 +35,9 @@ def collect_job(ctx: JobContext) -> dict:
         if shorts.retention_loop:  # early-retention signals and flop flags on every clip
             report = retention.evaluate(db, shorts)
             result["flops"] = len(report["flops"])
+            from ..shorts import abtest
+
+            abtest.evaluate(db)  # compare A/B arms once both have enough clips with numbers
     # Enough fresh data can change what we know: schedule a learning pass.
     with session_scope() as db:
         queue.enqueue(db, "learning.run", {}, dedupe_key="learning-run", run_after=utcnow() + timedelta(minutes=10),

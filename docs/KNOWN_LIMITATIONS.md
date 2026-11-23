@@ -79,6 +79,10 @@ not reach `youtube.com`, `graph.instagram.com`, `graph.facebook.com`, `api.opena
   import it from a Studio CSV. The retention report and `engagedViews` calls are written to Google's
   documentation and tested against a local fake of it, not yet against a real channel. Style rankings
   need 3+ posts per style and are correlations, not proof.
+- **A/B tests split clips, not viewers.** YouTube and Instagram don't let an app show two titles of
+  the same Short, so two different clips are compared; clip content differs too, which needs more
+  clips per side before a difference means anything. Cost covers metered AI calls and processing
+  time — not electricity, storage or your time.
 - **No cloud speech or vision services**: audio and frames are always processed on your server
   (only text is sent to AI providers), so transcription quality is bounded by the local engines.
 - **Speech recognition**: the bundled Vosk model is English-only, adds no punctuation (CLIPFORGE

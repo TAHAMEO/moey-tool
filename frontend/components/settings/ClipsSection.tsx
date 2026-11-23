@@ -198,6 +198,26 @@ function ShortsRows({ settings, save, editable }: SectionProps) {
         <Toggle checked={s.learn_from_retention} disabled={!editable || !s.retention_loop || !s.packaging_variants} onChange={(v) => set({ learn_from_retention: v })}
           label="Rank title options by what kept viewers" description="Title styles that held viewers better on your earlier posts move up a little (only after 3+ posts of a style)." />
       </Row>
+      <Row className="space-y-4">
+        <Label>Shorts: length, openings and tests</Label>
+        <Toggle checked={s.adaptive_length} disabled={!editable} onChange={(v) => set({ adaptive_length: v })}
+          label="Pick the length from the kind of clip" description="A quick tip aims for about 25 s, a list or story gets more room; Instagram's limit is respected. With early-retention feedback on, the length band that kept your viewers best counts too. A clip still only ends at a finished thought." />
+        <Toggle checked={s.alternate_hooks} disabled={!editable || !s.hook_scorer} onChange={(v) => set({ alternate_hooks: v })}
+          label="Find other openings for weak clips" description="When the opening stays weak, lists stronger starting points: a better line a little later in the clip, or a setup line just before it. Nothing is reordered." />
+        <Toggle checked={s.alternate_hooks_apply} disabled={!editable || !s.alternate_hooks} onChange={(v) => set({ alternate_hooks_apply: v })}
+          label="…and use the best one automatically" description="Only when it passes the opening check; otherwise the clip still waits for you." />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label hint="one at a time, across clips">A/B test</Label>
+            <Select value={s.ab_test} onChange={(v) => set({ ab_test: v as ShortsSettings["ab_test"] })} options={[
+              { value: "off", label: "Off" }, { value: "title", label: "Titles: best vs second option" },
+              { value: "first_frame", label: "First-frame text: best vs second option" },
+              { value: "hook", label: "Text on frame one vs none" }]} />
+          </div>
+          <NumberField label="Clips per side before deciding" value={s.ab_min_per_arm} min={5} max={50} disabled={!editable} onCommit={(v) => set({ ab_min_per_arm: v })} />
+        </div>
+        <p className="text-[12px] text-muted">Platforms can't show two titles of the same Short, so a test alternates new clips between the two options and compares how long viewers stayed (needs early-retention numbers). Results are in the Learning Center.</p>
+      </Row>
     </>
   );
 }

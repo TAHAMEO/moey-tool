@@ -330,6 +330,17 @@ def render_job(ctx: JobContext) -> dict:
         start, end, rank, hook = clip.start_s, clip.end_s, clip.rank, clip.hook
         clips_cfg = app_settings.get_section(db, "clips")
         shorts_cfg = app_settings.get_section(db, "shorts")
+        platforms = project.request.get("platforms") or app_settings.get_section(db, "publishing").platforms
+        ab_arm = None
+        if _ab_applies(shorts_cfg):
+            from ..shorts import abtest
+
+            ab_arm = abtest.assign(db, clip_id, shorts_cfg.ab_test, shorts_cfg.ab_min_per_arm)
+        learned_band = None
+        if shorts_cfg.adaptive_length and shorts_cfg.retention_loop:
+            from ..analytics import retention
+
+            learned_band = retention.best_length_band(db, shorts_cfg)
         brand = app_settings.get_section(db, "brand")
         aspects = project.request.get("aspects") or clips_cfg.aspects
         scores = dict(clip.scores or {})
@@ -353,7 +364,8 @@ def render_job(ctx: JobContext) -> dict:
     scene_cuts = [s["start"] for s in (analyses.get("scenes") or []) if isinstance(s, dict) and s.get("start", 0) > 0]
     settings = get_settings()
     work = settings.work_dir / "render" / str(clip_id)
-    shorts_plan = shorts_stage(words, analyses, start, end, has_video=paths["has_video"], scores=scores, cfg=shorts_cfg)
+    shorts_plan = shorts_stage(words, analyses, start, end, has_video=paths["has_video"], scores=scores, cfg=shorts_cfg,
+                               platforms=list(platforms), ab_arm=ab_arm, learned_band=learned_band)
     start, end = shorts_plan["start"], shorts_plan["end"]
     results = []
     for n, aspect in enumerate(aspects):
@@ -465,10 +477,23 @@ def render_job(ctx: JobContext) -> dict:
     return {"renders": results, "hook": (shorts_plan["record"].get("hook") or {}).get("status")}
 
 
+def _ab_applies(cfg) -> bool:
+    """An A/B test only runs when the thing it varies is made at all."""
+    if cfg.ab_test == "title":
+        return cfg.packaging_variants
+    if cfg.ab_test == "first_frame":
+        return cfg.packaging_variants and cfg.text_hook
+    if cfg.ab_test == "hook":
+        return cfg.text_hook and (cfg.packaging_variants or (cfg.hook_scorer and cfg.hook_reconstruct))
+    return False
+
+
 def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *, has_video: bool, scores: dict,
-                 cfg) -> dict:
+                 cfg, platforms: list[str] | None = None, ab_arm: dict | None = None,
+                 learned_band: str | None = None) -> dict:
     """First-3-seconds hook and loop-seam decisions for one clip (source seconds), shared by every
-    aspect ratio. With all Shorts switches off it changes nothing."""
+    aspect ratio. With all Shorts switches off it changes nothing. ``ab_arm`` is this clip's A/B
+    test arm ({dimension, arm}); ``learned_band`` the length band your retention numbers favour."""
     from ..shorts import hook as shook
     from ..shorts import loop as sloop
 
@@ -481,7 +506,24 @@ def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *,
                                 text_seconds=cfg.text_hook_seconds, tension_first=cfg.tension_first)
         result = shook.reconstruct(words, start, end, visual=visual, scenes=scenes, has_video=has_video, cfg=hcfg,
                                    rebuild=cfg.hook_reconstruct)
+        alternate = None
+        if result.status == "held" and cfg.alternate_hooks:
+            # P3: other openings that score better (start at a stronger line later, or a setup line earlier).
+            options = shook.alternates(words, start, end, visual=visual, scenes=scenes, has_video=has_video, cfg=hcfg)
+            if options and cfg.alternate_hooks_apply and options[0]["score"] >= cfg.hook_threshold:
+                retry = shook.reconstruct(words, options[0]["start"], end, visual=visual, scenes=scenes,
+                                          has_video=has_video, cfg=hcfg, rebuild=cfg.hook_reconstruct)
+                if retry.status != "held":
+                    alternate = options[0]
+                    retry.changes.insert(0, f"stronger opening used: {alternate['change']}")
+                    retry.before, retry.status = result.before, "improved"
+                    result = retry
+                    if not cfg.hook_reconstruct:
+                        out["start"] = alternate["start"]
+            out["record"]["alternate_hooks"] = options
         out["record"]["hook"] = result.to_dict()
+        if alternate:
+            out["record"]["hook"]["alternate_used"] = alternate
         out["plan_options"]["fade_in"] = False  # frame one is the picture, not black
         if cfg.hook_reconstruct:
             out["start"] = result.keep[0][0] if len(result.keep) == 1 else result.start
@@ -490,14 +532,27 @@ def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *,
             if cfg.text_hook and result.text_hook:
                 out["plan_options"].update(hook_text=result.text_hook, hook_text_s=cfg.text_hook_seconds,
                                            hook_text_y=shook.text_position(visual, out["start"]))
-    if cfg.loop_seam:
+    prefer_max_s, max_s = cfg.prefer_max_s, cfg.max_s
+    if cfg.adaptive_length:
+        from ..shorts import length as slength
+
+        text = " ".join(w["text"] for w in words if w["end"] > out["start"] + 1e-6 and w["start"] < out["end"] - 1e-6)
+        lplan = slength.target(text, platforms or ["youtube"], learned_band=learned_band, floor_s=cfg.min_s,
+                               ceiling_s=cfg.max_s)
+        prefer_max_s, max_s = lplan.prefer_max_s, lplan.max_s
+        out["record"]["length_plan"] = lplan.to_dict()
+    if cfg.loop_seam or cfg.adaptive_length:
         lcfg = sloop.LoopConfig(threshold=cfg.loop_threshold, search_s=cfg.loop_search_s, min_duration_s=cfg.min_s,
-                                prefer_max_s=cfg.prefer_max_s, max_duration_s=cfg.max_s)
+                                prefer_max_s=prefer_max_s, max_duration_s=max_s)
         pacing = (float(scores.get("emotion", 0.5)) + float(scores.get("clarity", 0.5))) / 2
         plan = sloop.choose_end(words, out["start"], out["end"], pacing=pacing, cfg=lcfg)
         out["end"] = plan.end
+        if not cfg.loop_seam:  # adaptive length only: choose the end, no blend
+            plan.bridge_s = 0.0
+            plan.changes = [c for c in plan.changes if "blend" not in c]
         out["record"]["loop"] = plan.to_dict()
-        out["plan_options"]["fade_out"] = False  # a loop must not end in black
+        if cfg.loop_seam:
+            out["plan_options"]["fade_out"] = False  # a loop must not end in black
     span_text = " ".join(w["text"] for w in words if w["end"] > out["start"] + 1e-6 and w["start"] < out["end"] - 1e-6)
     if cfg.kinetic_captions and span_text:
         from ..shorts import captions as scaptions
@@ -507,6 +562,8 @@ def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *,
         from ..shorts import packaging as spack
 
         frames = spack.first_frame_texts(span_text, spack.PackagingConfig(first_frame_words=cfg.first_frame_words))
+        if ab_arm and ab_arm.get("dimension") == "first_frame" and ab_arm.get("arm") == "B" and len(frames) > 1:
+            frames = [frames[1], frames[0], *frames[2:]]  # A/B test: this clip carries the second option
         out["record"]["first_frame_texts"] = frames
         if cfg.text_hook and frames:
             # The first frame is the thumbnail on Shorts: 1-2 big words, made from the clip's own words.
@@ -522,6 +579,12 @@ def shorts_stage(words: list[dict], analyses: dict, start: float, end: float, *,
                                             cfg=shook.HookConfig(threshold=cfg.hook_threshold,
                                                                  max_first_line_s=cfg.max_first_line_s))
                 hook.update(text_hook=frames[0], after=after.to_dict())
+    if ab_arm and ab_arm.get("dimension") == "hook" and ab_arm.get("arm") == "B" and out["plan_options"].get("hook_text"):
+        # A/B test of the hook style: this clip opens without on-screen text (spoken opening only).
+        out["record"]["text_hook_removed_for_test"] = out["plan_options"].pop("hook_text")
+        out["record"].pop("first_frame_text", None)
+    if ab_arm:
+        out["record"]["ab"] = ab_arm
     return out
 
 

@@ -241,7 +241,7 @@ def _rows(db: Session) -> list[tuple[Publication, OutputPackage, Clip, Render | 
                       .where(Publication.status == "published")).all()
 
 
-def styles_of(clip: Clip, package: OutputPackage) -> dict[str, str]:
+def styles_of(clip: Clip, package: OutputPackage, duration: float | None = None) -> dict[str, str]:
     from ..shorts import originality
 
     shorts = clip.shorts or {}
@@ -254,7 +254,14 @@ def styles_of(clip: Clip, package: OutputPackage) -> dict[str, str]:
         "first_frame_text": "yes" if shorts.get("first_frame_text") or (shorts.get("hook") or {}).get("text_hook") else "no",
         "rehook": (shorts.get("retention_plan") or {}).get("text_kind") or "none",
         "opening": (shorts.get("hook") or {}).get("status", "not scored"),
+        **({"length": _band(duration)} if duration else {}),
     }
+
+
+def _band(duration: float) -> str:
+    from ..shorts.length import band
+
+    return band(duration)
 
 
 def evaluate(db: Session, cfg) -> dict:
@@ -277,7 +284,7 @@ def evaluate(db: Session, cfg) -> dict:
         main = primary(sig)
         if main:
             per_platform.setdefault(f"{pub.platform}:{main[0]}", []).append(main[1])
-        entries.append((pub, package, clip, sig, main, found, suggestion))
+        entries.append((pub, package, clip, sig, main, found, suggestion, duration))
     # Normalise within platform+metric so a YouTube viewed-rate and an Instagram watch share mix fairly.
     def z(platform: str, main) -> float | None:
         values = per_platform.get(f"{platform}:{main[0]}", [])
@@ -289,7 +296,7 @@ def evaluate(db: Session, cfg) -> dict:
     groups: dict[str, dict[str, list[float]]] = {}
     segments: dict[str, list[dict]] = {}
     flops = []
-    for pub, package, clip, sig, main, found, suggestion in entries:
+    for pub, package, clip, sig, main, found, suggestion, duration in entries:
         if found:
             flops.append({"clip_id": str(clip.id), "publication_id": str(pub.id), "platform": pub.platform,
                           "title": package.title or (package.caption or "")[:80], "flags": found, "suggestion": suggestion,
@@ -297,7 +304,7 @@ def evaluate(db: Session, cfg) -> dict:
         if not main:
             continue
         score = z(pub.platform, main)
-        for dim, value in styles_of(clip, package).items():
+        for dim, value in styles_of(clip, package, duration).items():
             if score is not None:
                 groups.setdefault(dim, {}).setdefault(value, []).append(score)
         segments.setdefault(str(clip.source_id), []).append({
@@ -321,6 +328,13 @@ def template_boost(db: Session, cfg) -> dict[str, float]:
     report = evaluate(db, cfg)
     return {r["style"]: round(max(-0.1, min(0.1, 0.05 * r["relative_retention"])), 3)
             for r in report["ranking"] if r["dimension"] == "title_template" and r["enough_data"]}
+
+
+def best_length_band(db: Session, cfg) -> str | None:
+    """The length band that kept viewers best on your own posts (3+ posts), if any."""
+    ranked = [r for r in evaluate(db, cfg)["ranking"] if r["dimension"] == "length" and r["enough_data"]]
+    best = max(ranked, key=lambda r: r["relative_retention"], default=None)
+    return best["style"] if best and best["relative_retention"] > 0 else None
 
 
 def manual_entry(db: Session, publication_id: uuid.UUID, values: dict[str, float]) -> MetricSnapshot:

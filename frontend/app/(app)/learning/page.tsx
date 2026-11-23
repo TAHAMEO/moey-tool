@@ -9,7 +9,7 @@ import { Button, Card, EmptyState, Input, PageHeader, SectionHeader, Skeleton, T
 import { api, formatDate, platformName, timeAgo } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useResource } from "@/lib/hooks";
-import type { AnalyticsSummary, Experiment, KnowledgeItem, LearningRecord, MemoryItem, PublicationAnalytics, RetentionReport, Strategy } from "@/lib/types";
+import type { ABTestResult, AnalyticsSummary, CostReport, Experiment, KnowledgeItem, LearningRecord, MemoryItem, PublicationAnalytics, RetentionReport, Strategy } from "@/lib/types";
 
 type Tab = "insights" | "strategy" | "memory" | "knowledge";
 
@@ -83,6 +83,8 @@ function Insights() {
       </section>
 
       <RetentionSection />
+
+      <TestsAndCosts />
 
       <section>
         <SectionHeader title="Findings" description="Patterns found in your results. A pattern is not proof — CLIPFORGE tests promising ones before changing its strategy." />
@@ -523,6 +525,56 @@ function RetentionSection() {
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+/** P3: A/B tests across clips and what each published Short cost (metered AI spend, processing time). */
+function TestsAndCosts() {
+  const { data: tests } = useResource<ABTestResult[]>("/analytics/ab-tests");
+  const { data: cost } = useResource<CostReport>("/analytics/costs");
+  return (
+    <section>
+      <SectionHeader title="A/B tests and costs" description="Tests alternate new clips between two options (platforms can't show two titles of one Short) and compare how long viewers stayed. Costs are what the AI connections actually metered; local models cost nothing." />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-4 text-[12px]">
+          <p className="mb-2 text-[13px] font-medium">A/B tests</p>
+          {(tests ?? []).length === 0 ? <p className="text-muted">No test yet — choose one in Settings → Clips &amp; editing → “A/B test”.</p> : (
+            <ul className="space-y-3">
+              {(tests ?? []).map((t) => (
+                <li key={t.id}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-text">{t.dimension.replace("_", " ")}</span>
+                    <Badge tone={t.status === "concluded" ? "success" : t.status === "running" ? "info" : "neutral"}>{t.status}</Badge>
+                  </div>
+                  <div className="text-muted">A: {t.arms.A} — {t.assigned?.A ?? 0} clips, {t.measured?.A ?? 0} with numbers{t.mean?.A != null ? `, mean ${t.mean.A}` : ""}</div>
+                  <div className="text-muted">B: {t.arms.B} — {t.assigned?.B ?? 0} clips, {t.measured?.B ?? 0} with numbers{t.mean?.B != null ? `, mean ${t.mean.B}` : ""}</div>
+                  {t.conclusion ? <div className="text-text">{t.conclusion}</div> : <div className="text-faint">Decides after {t.min_per_arm} clips with numbers on each side.</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card className="p-4 text-[12px]">
+          <p className="mb-2 text-[13px] font-medium">Cost</p>
+          {!cost ? <Skeleton className="h-16" /> : (
+            <>
+              <p className="text-muted">AI spend so far <span className="text-text">${cost.ai_usd.toFixed(4)}</span> · processing {(cost.processing_s / 60).toFixed(0)} min · {cost.published} published Shorts
+                {cost.avg_ai_usd_per_short != null && <> · <span className="text-text">${cost.avg_ai_usd_per_short.toFixed(4)}</span> per Short</>}</p>
+              {cost.shorts.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {cost.shorts.slice(0, 8).map((s) => (
+                    <li key={s.publication_id} className="flex justify-between gap-2">
+                      <span className="truncate text-muted">{s.title} · {platformName(s.platform)}</span>
+                      <span className="shrink-0 text-text">${s.ai_usd.toFixed(4)}{s.estimated ? " est." : ""}{s.usd_per_1k_views != null ? ` · $${s.usd_per_1k_views.toFixed(4)}/1k views` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </Card>
+      </div>
     </section>
   );
 }

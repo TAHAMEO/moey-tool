@@ -131,6 +131,12 @@ class ShortsSettings(_Section):
     flop_first_3s_retention: float = Field(0.6, ge=0, le=2)  # audience still there at 3 s below this
     flop_avg_viewed_pct: float = Field(40, ge=0, le=200)    # average percentage viewed below this
     learn_from_retention: bool = False  # nudge title-option ranking by what kept viewers (needs >= 3 posts per style)
+    # P3 — later
+    adaptive_length: bool = False      # preferred length from the kind of clip (tip, list, story…), platforms and your data
+    alternate_hooks: bool = False      # weak opening: find other openings (a stronger line later, a setup line earlier)
+    alternate_hooks_apply: bool = False  # …and use the best one automatically when it passes
+    ab_test: Literal["off", "title", "first_frame", "hook"] = "off"  # one A/B test at a time, across clips
+    ab_min_per_arm: int = Field(5, ge=5, le=50)  # fewer can never show a clear difference
 
 
 class BrandSettings(_Section):

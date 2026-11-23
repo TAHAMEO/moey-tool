@@ -174,7 +174,7 @@ titles come from templates.
 | Publishing | Ask me first / Publish automatically / Drafts only; platforms; time zone; late-post limit; daily limits; YouTube visibility, playlist, caption track; Instagram feed sharing; made-for-kids |
 | Accounts | Connect or disconnect YouTube, Instagram and Google Drive with one click (sign-in on the platform's own page in a pop-up); a guided one-time set-up if this copy doesn't have its Google/Instagram app built in |
 | Sources | Download public YouTube/Instagram videos (on/off) |
-| Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music; **Shorts** switches (all off until you turn them on): score and fix the first 3 seconds, hold weak openings for review, make clips loop, re-hook at 20–25 s, kinetic captions, save each clip's transcript, 2–3 title and first-frame options, check against my last posts, early-retention feedback |
+| Clips & editing | Clips per video, length range, formats, caption style and languages, burned-in captions, silence removal, zoom, loudness, licensed music; **Shorts** switches (all off until you turn them on): score and fix the first 3 seconds, hold weak openings for review, make clips loop, re-hook at 20–25 s, kinetic captions, save each clip's transcript, 2–3 title and first-frame options, check against my last posts, early-retention feedback, length by kind of clip, other openings, A/B tests |
 | Brand | Channel name, accent colour (highlighted caption word), watermark and its position |
 | Live streams | Create live sessions and get the SRT address for OBS |
 | Media library | Music, sound effects, B-roll, logos and original masters — only files you confirm you have the rights to |
@@ -211,6 +211,16 @@ titles come from templates.
   Center → Insights → Early retention. Nothing is deleted or re-edited for you.
 - **Rank title options by what kept viewers** — title styles that held viewers better on your earlier
   posts move up a little (after 3+ posts of a style).
+- **Pick the length from the kind of clip** — a quick tip aims for about 25 s, a list or story gets
+  more room; your own retention numbers can move it. A clip still ends only at a finished thought.
+- **Find other openings for weak clips** — lists better starting points (a stronger line a little
+  later, or a setup line just before); press **Use** on the clip to re-render from there, or let the
+  best one be used automatically.
+- **A/B test** — titles, first-frame text, or text on frame one vs none. New clips alternate between
+  the two; after enough clips with retention numbers on each side (5 by default), the Learning Center
+  shows which kept viewers better — or that there's no clear difference yet.
+- **Cost** — each clip shows what its AI calls cost (local models are free) and how long it took to
+  make; the Learning Center shows the cost per published Short.
 
 ## Live streams
 

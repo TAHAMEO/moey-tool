@@ -334,8 +334,9 @@ def package_node(state: VideoState, config) -> VideoState:
                     package.hashtags = copy.instagram_hashtags
                     package.cover_asset_id = vertical.thumbnail_asset_id
                 if variants:
-                    apply_variant(package, variants[0].to_dict())
-                    package.metadata_method = f"variant:{variants[0].template}"
+                    chosen = choose_variant(clip, variants)
+                    apply_variant(package, chosen.to_dict())
+                    package.metadata_method = f"variant:{chosen.template}"
                 package.status = "ready"
                 db.flush()
                 hook = (clip.shorts or {}).get("hook") or {}
@@ -373,6 +374,14 @@ def _packaging_variants(clip, copy, cfg, channel: str, *, credit: str, boost: di
         v.instagram_caption = (v.instagram_caption + credit)[:metadata.IG_CAPTION_MAX]
     clip.shorts = {**shorts, "packaging_variants": [v.to_dict() for v in variants]}
     return variants
+
+
+def choose_variant(clip, variants: list):
+    """The best-ranked option, or the second one for a clip in arm B of a title A/B test (P3)."""
+    ab = (clip.shorts or {}).get("ab") or {}
+    if ab.get("dimension") == "title" and ab.get("arm") == "B" and len(variants) > 1:
+        return variants[1]
+    return variants[0]
 
 
 def apply_variant(package, variant: dict) -> None:

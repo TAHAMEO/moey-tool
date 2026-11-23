@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...analytics import compare, retention
+from ...analytics import compare, costs, retention
 from ...db.base import get_db, utcnow
 from ...db.models import Experiment, LearningRecord, MetricSnapshot, OutputPackage, Publication, Strategy
 from ...jobs import queue
@@ -102,6 +102,19 @@ def retention_report(db: Session = Depends(get_db), _: Principal = Depends(viewe
     """Early retention per clip, flops to re-edit or delete, hook/title styles ranked by what kept
     viewers, and the source segments that made the strongest openings."""
     return retention.evaluate(db, app_settings.get_section(db, "shorts"))
+
+
+@router.get("/analytics/costs")
+def cost_report(db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> dict:
+    """What making and posting Shorts cost: metered AI spend and processing time, per published Short."""
+    return costs.channel_costs(db)
+
+
+@router.get("/analytics/ab-tests")
+def ab_tests(db: Session = Depends(get_db), _: Principal = Depends(viewer)) -> list[dict]:
+    from ...shorts import abtest
+
+    return abtest.evaluate(db)
 
 
 @router.get("/learning/records")

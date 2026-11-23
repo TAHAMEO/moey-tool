@@ -659,6 +659,22 @@ class Experiment(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ABTest(Base):
+    """A/B test of one Shorts choice (title option, first-frame text, text hook on/off) across clips:
+    each new clip is put in arm A or B; the arms are compared on early retention (P3)."""
+
+    __tablename__ = "ab_tests"
+
+    id: Mapped[uuid.UUID] = _pk()
+    dimension: Mapped[str] = mapped_column(String(30))  # title|first_frame|hook
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|concluded|stopped
+    min_per_arm: Mapped[int] = mapped_column(Integer, default=5)
+    arms: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {"A": "...", "B": "..."} descriptions
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = _created()
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class LearningRecord(Base):
     __tablename__ = "learning_records"
 

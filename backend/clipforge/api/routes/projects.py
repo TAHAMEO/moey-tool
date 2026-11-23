@@ -96,6 +96,9 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
         raise HTTPException(404, {"code": "not_found", "message": "Project not found."})
     source = db.get(Source, project.source_id) if project.source_id else None
     clips_out = []
+    from ...analytics import costs
+
+    clip_costs = costs.project_costs(db, project.id)
     for clip in db.execute(select(Clip).where(Clip.project_id == project.id).order_by(Clip.rank)).scalars():
         renders = []
         for r in db.execute(select(Render).where(Render.clip_id == clip.id).order_by(Render.created_at)).scalars():
@@ -134,11 +137,12 @@ def project_detail(project_id: uuid.UUID, db: Session = Depends(get_db), _: Prin
                           "total_score": clip.total_score, "reasons": clip.reasons, "status": clip.status,
                           "scoring_method": clip.scoring_method, "renders": renders, "packages": packages,
                           "hook_score": clip.hook_score, "loop_score": clip.loop_score, "shorts": clip.shorts or {},
-                          "transcript_url": _asset_url(((clip.shorts or {}).get("seo") or {}).get("transcript_asset_id"))})
+                          "transcript_url": _asset_url(((clip.shorts or {}).get("seo") or {}).get("transcript_asset_id")),
+                          "cost": clip_costs["clips"].get(str(clip.id))})
     jobs = db.execute(select(Job).where(Job.project_id == project.id, Job.parent_id.is_(None)).order_by(Job.created_at)).scalars()
     return {**_project_summary(db, project), "instruction": project.instruction, "request": project.request,
             "limitations": project.limitations, "errors": project.errors,
-            "access": (source.access_detail if source else None), "clips": clips_out,
+            "access": (source.access_detail if source else None), "clips": clips_out, "cost": clip_costs["total"],
             "jobs": [queue.job_summary(j) for j in jobs]}
 
 

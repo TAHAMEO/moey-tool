@@ -332,3 +332,34 @@ def reconstruct(words: list[dict], start: float, end: float, *, visual: list[dic
         status = "held"  # a text overlay alone doesn't rescue a weak spoken opening
     return HookResult(start=new_start, end=end, keep=keep, text_hook=text, before=before, after=after,
                       changes=changes, status=status)
+
+
+def alternates(words: list[dict], start: float, end: float, *, visual: list[dict] | None = None,
+               scenes: list[dict] | None = None, has_video: bool = True, cfg: HookConfig | None = None,
+               earlier_s: float = 15.0, later_share: float = 0.4, max_n: int = 3) -> list[dict]:
+    """Other openings for a clip whose opening is weak (P3), best first: start at a stronger line
+    later in the clip (it gets shorter, nothing moves) or a little earlier in the video (a setup
+    line just before the clip). Each is scored like the opening itself; only ones that beat the
+    current opening are returned. The speaker's words and order are never changed."""
+    cfg = cfg or HookConfig()
+    kw = {"visual": visual, "scenes": scenes, "has_video": has_video, "cfg": cfg}
+    current = score_opening(words, start, end, **kw).score
+    out: list[dict] = []
+    latest = min(start + (end - start) * later_share, end - cfg.min_duration_s)
+    for sent in tu.sentences(_words_in(words, start - earlier_s, end)):
+        if sent.start < start - earlier_s - 1e-6 or is_runway(sent.text) or abs(sent.start - start) < 0.3:
+            continue
+        if sent.start > start and sent.start > latest:
+            break
+        prev = [w for w in words if w["end"] <= sent.start + 1e-6]
+        gap = sent.start - prev[-1]["end"] if prev else 0.3
+        cut = round(max(0.0, sent.start - min(0.15, max(0.0, gap / 2))), 3)
+        assessment = score_opening(words, cut, end, **kw)
+        if assessment.score <= current + 0.05:
+            continue
+        kind = "later" if sent.start > start else "earlier"
+        out.append({"kind": kind, "start": cut, "end": end, "score": assessment.score,
+                    "delta": round(assessment.score - current, 3), "first_line": sent.text[:90],
+                    "reasons": assessment.reasons, "change": f"start {cut - start:+.1f} s, at “{sent.text[:50]}”"})
+    out.sort(key=lambda a: -a["score"])
+    return out[:max_n]

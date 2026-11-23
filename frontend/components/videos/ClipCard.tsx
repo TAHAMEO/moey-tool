@@ -170,7 +170,9 @@ function ShortsStatus({ clip }: { clip: Clip }) {
   const rehook = clip.shorts?.retention_plan;
   const orig = Object.entries(clip.shorts?.originality_flags ?? {});
   const stats = Object.entries(clip.shorts?.analytics ?? {});
-  if (!hook && !loop && !gate && !rehook && !orig.length && !stats.length) return null;
+  const lengthPlan = clip.shorts?.length_plan;
+  const ab = clip.shorts?.ab;
+  if (!hook && !loop && !gate && !rehook && !orig.length && !stats.length && !lengthPlan && !ab && !clip.cost) return null;
   const pct = (v?: number | null) => (v == null ? "–" : Math.round(v * 100));
   return (
     <div className="mt-4 space-y-2 rounded-xl border border-border p-3 text-[12px]">
@@ -183,6 +185,11 @@ function ShortsStatus({ clip }: { clip: Clip }) {
         {loop && <Badge tone={loop.assessment.loopable ? "success" : "neutral"}>Loop: {pct(clip.loop_score)}{loop.bridged ? " · blended" : ""}</Badge>}
         {gate && <Badge tone={gate.result === "held" ? "warning" : gate.result === "approved" ? "success" : "neutral"}>{GATE_LABEL[gate.result] ?? gate.result}</Badge>}
         {rehook && <Badge tone={rehook.at != null ? "success" : "neutral"}>{rehook.at != null ? `Re-hook at ${rehook.at.toFixed(1)} s` : "No re-hook"}</Badge>}
+        {lengthPlan && <Badge>{lengthPlan.content_type}: aim ≤ {Math.round(lengthPlan.prefer_max_s)} s</Badge>}
+        {ab && <Badge>A/B {ab.dimension.replace("_", " ")}: side {ab.arm} ({ab.means})</Badge>}
+        {clip.cost && (
+          <Badge>{clip.cost.ai_usd > 0 ? `AI $${clip.cost.ai_usd.toFixed(4)}${clip.cost.estimated ? " (est.)" : ""}` : "No paid AI"} · {(clip.cost.processing_s / 60).toFixed(1)} min processing</Badge>
+        )}
       </div>
       {(clip.shorts?.first_frame_text ?? hook?.text_hook) && <p className="text-muted">Text on frame one: <span className="font-semibold text-text">{clip.shorts?.first_frame_text ?? hook?.text_hook}</span></p>}
       {[...(hook?.changes ?? []), ...(loop?.changes ?? []), ...(rehook?.changes ?? [])].length > 0 && (
@@ -191,6 +198,7 @@ function ShortsStatus({ clip }: { clip: Clip }) {
         </ul>
       )}
       {rehook?.skipped && <p className="text-faint">Re-hook skipped: {rehook.skipped}</p>}
+      {(clip.shorts?.alternate_hooks ?? []).length > 0 && !hook?.alternate_used && <AlternateOpenings clip={clip} />}
       {orig.map(([platform, o]) => (o.flagged || o.switched_to) ? (
         <p key={`o-${platform}`} className={o.flagged ? "text-warning" : "text-muted"}>
           {platformName(platform)} originality: {o.reasons.join("; ")} (compared with {o.compared} recent posts)
@@ -252,6 +260,31 @@ function Variants({ clip, onChanged }: { clip: Clip; onChanged: () => void }) {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+/** Stronger openings found for a weak clip; "Use" re-renders the clip from there (P3). */
+function AlternateOpenings({ clip }: { clip: Clip }) {
+  const toast = useToast();
+  const { can } = useAuth();
+  async function use(start: number, end: number) {
+    try {
+      await api(`/clips/${clip.id}`, { method: "PATCH", body: { start_s: start, end_s: end, rerender: true } });
+      toast("success", "Re-rendering with the new opening.");
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "Could not change the opening");
+    }
+  }
+  return (
+    <div className="space-y-1">
+      <p className="text-text">Stronger openings found:</p>
+      {(clip.shorts?.alternate_hooks ?? []).map((a) => (
+        <div key={`${a.kind}-${a.start}`} className="flex flex-wrap items-center gap-2 text-muted">
+          <span>{a.change} — first 3 s {Math.round(a.score * 100)} (+{Math.round(a.delta * 100)})</span>
+          {can("editor") && <Button size="sm" variant="ghost" onClick={() => use(a.start, a.end)}>Use</Button>}
+        </div>
+      ))}
     </div>
   );
 }
